@@ -1,0 +1,84 @@
+name: OSIR reviewed original Server image PG18 stress
+
+on:
+  workflow_dispatch:
+    inputs:
+      harness_commit:
+        description: Reviewed full commit SHA; choose this exact workflow ref
+        type: string
+        required: true
+      image_archives_json:
+        description: Nonsecret host/prefix and sealed SHA256+bytes for api/pg/redis docker archives
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osir-server-isolated-${{ inputs.harness_commit }}
+  cancel-in-progress: false
+
+jobs:
+  original-image-pg18:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      REVIEWED_COMMIT: ${{ inputs.harness_commit }}
+      WORKFLOW_COMMIT: ${{ github.workflow_sha }}
+    steps:
+      - name: Refuse workflow/source ref drift
+        shell: bash
+        run: |
+          [[ "$REVIEWED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$REVIEWED_COMMIT" = "$GITHUB_SHA"
+          test "$REVIEWED_COMMIT" = "$WORKFLOW_COMMIT"
+      - name: Set evidence root from runner environment
+        shell: bash
+        run: printf 'EVIDENCE_ROOT=%s/osir-server-stress\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.harness_commit }}
+          persist-credentials: false
+      - name: Test isolated harness safety guards
+        run: python3 -B -m unittest discover -s scripts/osir-server-stress -p test_run.py -v
+      - name: Fetch and decrypt exact original images using test-only secrets
+        env:
+          OSIR_ARCHIVE_PASSWORD: ${{ secrets.OSIR_STRESS_ARCHIVE_PASSWORD }}
+          OSIR_ARCHIVES_JSON: ${{ inputs.image_archives_json }}
+          OSIR_API_GET_URL: ${{ secrets.OSIR_STRESS_API_GET_URL }}
+          OSIR_PG_GET_URL: ${{ secrets.OSIR_STRESS_PG_GET_URL }}
+          OSIR_REDIS_GET_URL: ${{ secrets.OSIR_STRESS_REDIS_GET_URL }}
+        run: python3 -B scripts/osir-server-stress/run.py fetch --root "$EVIDENCE_ROOT"
+      - name: Run exact original runtime under actual cgroup v2 limits
+        shell: bash
+        run: |
+          sudo env -i PATH=/usr/bin:/bin GITHUB_ACTIONS=true \
+            /usr/bin/python3 -B scripts/osir-server-stress/run.py run --root "$EVIDENCE_ROOT"
+      - name: Make only sanitized evidence readable by artifact uploader
+        if: always()
+        shell: bash
+        run: |
+          sudo /usr/bin/python3 -B - "$EVIDENCE_ROOT" "$UID" <<'PY'
+          import os,sys
+          from pathlib import Path
+          root=Path(sys.argv[1]);uid=int(sys.argv[2])
+          if root.is_dir():
+              for path in list(root.glob('*.json'))+list(root.glob('osir-pg18-test-*/*.json'))+list(root.glob('osir-pg18-test-*/*.jsonl')):
+                  if path.is_file() and not path.is_symlink():
+                      os.chown(path,uid,-1)
+                      os.chmod(path,0o600)
+                      os.chmod(path.parent,0o755)
+          PY
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: osir-server-pg18-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/osir-server-stress/*.json
+            ${{ runner.temp }}/osir-server-stress/osir-pg18-test-*/*.json
+            ${{ runner.temp }}/osir-server-stress/osir-pg18-test-*/*.jsonl
+          if-no-files-found: warn
+          retention-days: 7
+
+# No publish, deploy, production secrets, SSH, build or dependency resolution.
