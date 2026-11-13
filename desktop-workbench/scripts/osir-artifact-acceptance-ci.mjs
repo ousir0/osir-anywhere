@@ -228,10 +228,10 @@ export function sanitizedStderr(raw, env = process.env) {
 
 // Drain stderr without retaining unbounded output. Never serialize an exception
 // object or the environment; only sanitized stderr and fixed process metadata.
-export async function boundedArchiveCommand(tool, args, { env = process.env, timeout = 300000 } = {}) {
+export async function boundedArchiveCommand(tool, args, { cwd, env = process.env, timeout = 300000 } = {}) {
   return new Promise(resolveResult => {
     let child;
-    try { child = spawn(tool, args, { stdio: ['ignore', 'ignore', 'pipe'], env, windowsHide: true }); }
+    try { child = spawn(tool, args, { cwd, stdio: ['ignore', 'ignore', 'pipe'], env, windowsHide: true }); }
     catch { resolveResult({ status: null, signal: null, spawnFailed: true, timedOut: false, stderr: '', stderrBytes: 0, stderrTruncated: false }); return; }
     let kept = 0, total = 0, timedOut = false, spawnFailed = false;
     const chunks = [], timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
@@ -248,6 +248,12 @@ export async function boundedArchiveCommand(tool, args, { env = process.env, tim
   });
 }
 
+export function cacheArchiveArguments(prep, names) {
+  // A drive-qualified archive (D:\\...) is interpreted as a remote host by
+  // Git for Windows GNU tar. The output cwd supplies its location portably.
+  return ['-cf', 'offline-cache.tar', '-C', prep, 'cache', ...names];
+}
+
 export async function sealCache(spec, prep, output, harness) {
   check(isAbsolute(prep) && isAbsolute(output) && !within(prep, output) && !within(output, prep), 'Cache bundle must be independent of online preparation');
   const { report, names } = await warmEvidence(spec, prep);
@@ -256,10 +262,10 @@ export async function sealCache(spec, prep, output, harness) {
   const archive = join(output, 'offline-cache.tar');
   // tar preserves uv cache links and executable permissions; upload-artifact's
   // own zip serialization is not used for the cache tree itself.
-  const command = await boundedArchiveCommand('tar', ['-cf', archive, '-C', prep, 'cache', ...names]);
+  const command = await boundedArchiveCommand('tar', cacheArchiveArguments(prep, names), { cwd: output });
   const passed = command.status === 0 && !command.spawnFailed && !command.timedOut;
   await immutableFile(join(prep, 'cache-archive-command.json'), bytes({ schemaVersion: 1, scope: 'native-cache-archive-command',
-    harness, nativeMachine: spec.runner.nativeMachine, expected: spec.expected, tool: 'tar', operation: 'create',
+    harness, nativeMachine: spec.runner.nativeMachine, expected: spec.expected, tool: 'tar', operation: 'create', archivePathMode: 'relative-to-output-cwd',
     result: passed ? 'passed' : 'failed', ...command }));
   check(passed, 'Cache tar creation failed; bounded sanitized stderr preserved in warm/cache-archive-command.json');
   check(report.cache.sha256 === await fingerprintTree(join(prep, 'cache')), 'Cache changed while archiving');

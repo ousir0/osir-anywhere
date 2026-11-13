@@ -7,11 +7,19 @@ import { join } from 'node:path';
 import { bytes, digest, fingerprint, inspect } from './osir-anywhere-release-common.mjs';
 import { fingerprintTree } from './osir-native-smoke.mjs';
 import { parseArguments as provisionArguments } from './osir-native-smoke-provision.mjs';
-import { REPOSITORY, STDERR_LIMIT, acceptanceMatrix, bindDownloadedArtifact, boundedArchiveCommand, collectEvidence, githubMetadata, reviewedBindings, sanitizedStderr, sealCache, unpackCache, unpackProductArchive, verifyHarness, verifyHarnessFiles, verifyProducer, verifyRemoteArtifacts, verifySmokeReport } from './osir-artifact-acceptance-ci.mjs';
+import { REPOSITORY, STDERR_LIMIT, acceptanceMatrix, bindDownloadedArtifact, boundedArchiveCommand, cacheArchiveArguments, collectEvidence, githubMetadata, reviewedBindings, sanitizedStderr, sealCache, unpackCache, unpackProductArchive, verifyHarness, verifyHarnessFiles, verifyProducer, verifyRemoteArtifacts, verifySmokeReport } from './osir-artifact-acceptance-ci.mjs';
 
 const A = 'a'.repeat(40), B = 'b'.repeat(40), H = 'c'.repeat(40), X = '1'.repeat(64);
 const harness = { repository: REPOSITORY, commit: H, runId: 77, runAttempt: 2 };
 const clone = value => structuredClone(value);
+
+test('Windows drive paths and spaces cannot become a remote tar archive; process runs in the output cwd', async t => {
+  const prep = 'D:\\a\\_temp\\warm cache';
+  assert.deepEqual(cacheArchiveArguments(prep, ['dependency-cache.json']), ['-cf', 'offline-cache.tar', '-C', prep, 'cache', 'dependency-cache.json']);
+  const root = await mkdtemp(join(tmpdir(), 'osir-tar-cwd-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const result = await boundedArchiveCommand(process.execPath, ['-e', 'process.stderr.write(process.cwd())'], { cwd: root });
+  assert.equal(result.status, 0); assert.equal(result.stderr, execFileSync(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { cwd: root }).toString());
+});
 
 test('archive diagnostics preserve exact ordinary stderr, sanitize credentials and bound noisy failures', async () => {
   const stderr = 'tar: cache/file: Cannot stat: No such file or directory\r\ntar: Error exit delayed from previous errors.\r\n';
@@ -166,6 +174,8 @@ test('separate-job cache transfer preserves symlinks, raw evidence and exact res
   const sealed = await sealCache(f.spec, prep, bundle, harness);
   const diagnostic = JSON.parse(await readFile(join(prep, 'cache-archive-command.json')));
   assert.equal(diagnostic.result, 'passed'); assert.equal(diagnostic.status, 0); assert.deepEqual(diagnostic.harness, harness);
+  assert.equal(diagnostic.archivePathMode, 'relative-to-output-cwd');
+  assert.deepEqual((await readdir(bundle)).sort(), ['cache-transfer.json', 'offline-cache.tar']);
   assert.equal(sealed.cacheSha256, report.cache.sha256);
   await unpackCache(f.spec, bundle, offline, harness);
   assert.equal(await fingerprintTree(join(offline, 'cache')), report.cache.sha256);
