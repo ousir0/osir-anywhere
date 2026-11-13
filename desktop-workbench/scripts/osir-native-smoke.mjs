@@ -258,6 +258,14 @@ class Inspector {
 }
 
 const ELECTRON = "process.getBuiltinModule('module').createRequire(process.resourcesPath + '/app.asar/package.json')('electron')";
+export function validateWindowsMetadata(metadata, version) {
+  const exact = value => value === version || value === `${version}.0`;
+  check(metadata?.ProductName === PRODUCT && exact(metadata.ProductVersion) && exact(metadata.FileVersion), 'Installed Windows product/version mismatch');
+}
+export function validateWelcome(state) {
+  check(state?.ready === true && state.branded === true && state.action?.enabled === true && state.action.visible === true &&
+    typeof state.action.text === 'string' && state.action.text.trim().length > 0, 'Packaged renderer welcome action is not ready');
+}
 export function validateWindow(state, { version, nativeMachine, resources, accountHome, allowedDataRoots, pid }) {
   check(state && state.pid === pid && state.packaged && state.electron && state.name === PRODUCT && state.version === version && `${state.platform}-${state.arch}` === nativeMachine, 'Launched Electron identity/version/architecture mismatch');
   check(resolve(state.resources) === resolve(resources) && resolve(state.home) === resolve(accountHome) && allowedDataRoots.some(root => within(root, state.userData)), 'Electron escaped isolated home/data or installed resources');
@@ -289,6 +297,13 @@ async function launchWindow(executable, resources, context) {
       catch { await pause(250); }
     }
     window = validateWindow(state, { ...context, resources, pid: child.pid });
+    let welcome;
+    while (Date.now() < deadline) {
+      welcome = await inspector.evaluate(`(async()=>{const w=${ELECTRON}.BrowserWindow.fromId(${window.id});return w.webContents.executeJavaScript(${JSON.stringify("(() => { const h=document.querySelector('h1'); const b=document.querySelector('button'); const r=b?.getBoundingClientRect(); const s=b&&getComputedStyle(b); return {ready:document.readyState==='complete',branded:!!h?.textContent?.includes('OSIR Anywhere'),action:b?{text:b.textContent?.trim(),enabled:!b.disabled,visible:!!r&&r.width>0&&r.height>0&&s.display!=='none'&&s.visibility==='visible'}:null}; })()")});})()`);
+      try { validateWelcome(welcome); break; } catch { await pause(250); }
+    }
+    validateWelcome(welcome);
+    await context.evidence('renderer-welcome.json', JSON.stringify(welcome, null, 2));
     const screenshot = await inspector.evaluate(`(async()=>{const w=${ELECTRON}.BrowserWindow.fromId(${window.id});const image=await w.webContents.capturePage();return image.isEmpty()?null:image.toPNG().toString('base64');})()`);
     check(typeof screenshot === 'string' && screenshot.length > 100, 'Electron window capture is empty');
     const png = Buffer.from(screenshot, 'base64');
@@ -409,7 +424,7 @@ export class NativeAdapter {
       executable = join(destination, `${PRODUCT}.exe`); resources = join(destination, 'resources');
       const env = { ...this.env, OSIR_SMOKE_EXE: executable };
       metadata = JSON.parse(await this.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$v=(Get-Item -LiteralPath $env:OSIR_SMOKE_EXE).VersionInfo;@{ProductName=$v.ProductName;ProductVersion=$v.ProductVersion;FileVersion=$v.FileVersion}|ConvertTo-Json -Compress'], 'installed-pe-metadata', { env }));
-      check(metadata.ProductName === PRODUCT && metadata.ProductVersion === expected.version, 'Installed Windows product/version mismatch');
+      validateWindowsMetadata(metadata, expected.version);
     }
     const pkg = await asarJson(join(resources, 'app.asar'), 'package.json');
     check(pkg.name === 'osir-anywhere-desktop-workbench' && pkg.version === expected.version && pkg.productName === PRODUCT && pkg.main === 'dist/electron/main.js', 'Installed ASAR product/version mismatch');
