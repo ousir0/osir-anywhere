@@ -379,7 +379,7 @@ export class NativeAdapter {
       check(translated.code === 0 || /unknown oid|unknown key/i.test(translated.stderr), 'Cannot establish native translation status');
       return { arch: ({ arm64: 'arm64', x86_64: 'x64' })[machine], translated: translated.stdout.trim() === '1' };
     }
-    const code = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class NativeMachine{[DllImport("kernel32.dll",SetLastError=true)]public static extern bool IsWow64Process2(IntPtr h,out ushort p,out ushort n);}';$p=0 -as [ushort];$n=0 -as [ushort];if(-not [NativeMachine]::IsWow64Process2((Get-Process -Id ${process.pid}).Handle,[ref]$p,[ref]$n)){throw 'IsWow64Process2 failed'};@{processMachine=[int]$p;nativeMachine=[int]$n}|ConvertTo-Json -Compress`;
+    const code = `$ErrorActionPreference='Stop';Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class NativeMachine{[DllImport("kernel32.dll",SetLastError=true)]public static extern bool IsWow64Process2(IntPtr h,out ushort p,out ushort n);}';[System.UInt16]$p=0;[System.UInt16]$n=0;if(-not [NativeMachine]::IsWow64Process2((Get-Process -Id ${process.pid}).Handle,[ref]$p,[ref]$n)){throw 'IsWow64Process2 failed'};@{processMachine=[int]$p;nativeMachine=[int]$n}|ConvertTo-Json -Compress`;
     const machine = JSON.parse(await this.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', code], 'hardware-machine'));
     return { arch: ({ 34404: 'x64', 43620: 'arm64' })[machine.nativeMachine], translated: machine.processMachine !== 0 };
   }
