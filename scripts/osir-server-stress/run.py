@@ -37,19 +37,56 @@ def require(ok, message):
         raise Refused(message)
 
 
-def call(*args, timeout=20):
-    p = subprocess.run(args, env=CHILD_ENV, stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE, timeout=timeout)
+class CommandFailure(Refused):
+    def __init__(self, context, returncode, timed_out, stderr):
+        super().__init__('bounded command failed: docker')
+        # Never retain/render stderr text; classify at most its first 4096 bytes.
+        prefix = (stderr or b'')[:4096].lower()
+        tags = [tag for tag, needle in (
+            ('container_not_running', b'is not running'),
+            ('container_missing', b'no such container'),
+            ('permission_denied', b'permission denied'),
+            ('tmpfs_copy_unsupported', b'tmpfs'),
+            ('exec_failed', b'exec failed'),
+            ('connection_refused', b'connection refused'),
+            ('connection_timeout', b'timed out'),
+            ('file_missing', b'no such file or directory'),
+            ('resource_unavailable', b'resource temporarily unavailable'),
+        ) if needle in prefix]
+        self.evidence = dict(context, returncode=returncode, timed_out=timed_out,
+                             stderr_bytes=len(stderr or b''),
+                             stderr_prefix_bytes_scanned=len(prefix),
+                             stderr_tags=tags or ['unclassified_suppressed'])
+
+
+def call(*args, timeout=20, failure_context=None):
+    try:
+        p = subprocess.run(args, env=CHILD_ENV, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        if failure_context is not None:
+            raise CommandFailure(failure_context, None, True, exc.stderr) from None
+        raise
+    if p.returncode != 0 and failure_context is not None:
+        raise CommandFailure(failure_context, p.returncode, False, p.stderr)
     require(p.returncode == 0, 'bounded command failed: ' + args[0].split('/')[-1])
     return p.stdout.decode().strip()
 
 
-def docker(*args, **kw):
-    return call('/usr/bin/docker', '--host=unix:///var/run/docker.sock', *args, **kw)
+def docker(*args, role=None, operation=None, **kw):
+    require(role in (None, 'api', 'pg', 'redis', 'driver'), 'diagnostic role refused')
+    require(operation in (None, 'readiness', 'driver-result-poll', 'driver-result-read', 'idle-metrics'),
+            'diagnostic operation refused')
+    allowed = ('info','version','image','run','network','create','inspect','start','exec','cp','stop','load')
+    context = {'tool':'docker', 'role':role or 'unassigned',
+               'operation':operation or (args[0] if args and args[0] in allowed else 'other'),
+               'timeout_seconds':kw.get('timeout',20)}
+    return call('/usr/bin/docker', '--host=unix:///var/run/docker.sock', *args,
+                failure_context=context, **kw)
 
 
-def inspect(ref):
-    return json.loads(docker('inspect', ref))[0]
+def inspect(ref, role=None):
+    return json.loads(docker('inspect', ref, role=role))[0]
 
 
 def dump(path, data):
@@ -236,7 +273,7 @@ class Experiment:
         self.stream=(self.work/'kernel-samples.jsonl').open('x');os.chmod(self.work/'kernel-samples.jsonl',0o600)
 
     def check(self,role):
-        cid=self.ids[role];o=inspect(cid);ownership(o,self.owner,cid,role)
+        cid=self.ids[role];o=inspect(cid, role=role);ownership(o,self.owner,cid,role)
         require(o['Image']==BINDINGS['images']['api' if role=='driver' else role]['id'], 'container image drift')
         require(set(o['NetworkSettings']['Networks'])=={self.network} and
                 not o['HostConfig'].get('PortBindings'), 'only isolated internal network allowed')
@@ -279,16 +316,16 @@ class Experiment:
             args+=[BINDINGS['images']['api']['id'],'-B','/opt/probe.py','--serve' if role=='api' else '--driver']
         dump(self.work/('intent-'+role+'.json'),{'name':name,'owner':self.owner})
         try:
-            cid=docker(*args,timeout=30)
+            cid=docker(*args,timeout=30,role=role)
             require(re.fullmatch('[0-9a-f]{64}',cid) is not None,'create ID required')
         except BaseException:
             try:
-                o=inspect(name);ownership(o,self.owner,o['Id'],role);self.ids[role]=o['Id']
+                o=inspect(name,role=role);ownership(o,self.owner,o['Id'],role);self.ids[role]=o['Id']
                 dump(self.work/('owned-'+role+'.json'),{'id':o['Id'],'owner':self.owner})
             except Exception:self.report['uncertain_create_role']=role
             raise
         self.ids[role]=cid;dump(self.work/('owned-'+role+'.json'),{'id':cid,'owner':self.owner})
-        self.check(role);docker('start',cid)
+        self.check(role);docker('start',cid,role=role)
         o=self.check(role);require(o['State']['Running'],'test exited at startup')
         self.paths[role]=kernel_paths(o['State']['Pid']);self.sample()
 
@@ -309,12 +346,25 @@ class Experiment:
         while time.monotonic()<end:
             self.sample('startup')
             try:
-                if role=='pg':docker('exec',self.ids[role],'pg_isready','-U','capacity_test',timeout=4)
-                elif role=='redis':require(docker('exec',self.ids[role],'redis-cli','ping')=='PONG','redis readiness')
-                else:docker('exec',self.ids[role],'python','-B','-c',"import urllib.request;assert urllib.request.urlopen('http://127.0.0.1:8000/api/v2/health/ready',timeout=2).status==200",timeout=4)
+                if role=='pg':docker('exec',self.ids[role],'pg_isready','-U','capacity_test',timeout=4,role='pg',operation='readiness')
+                elif role=='redis':require(docker('exec',self.ids[role],'redis-cli','ping',role='redis',operation='readiness')=='PONG','redis readiness')
+                else:docker('exec',self.ids[role],'python','-B','-c',"import urllib.request;assert urllib.request.urlopen('http://127.0.0.1:8000/api/v2/health/ready',timeout=2).status==200",timeout=4,role='api',operation='readiness')
                 return
             except Refused:time.sleep(1)
         raise Refused('isolated service readiness deadline')
+
+    def collect_driver_result(self):
+        # Docker cp does not support paths on tmpfs; exec reads the live owned test.
+        self.report['phase'] = 'driver_result_read'
+        self.check('driver')
+        raw = docker('exec', self.ids['driver'], 'python', '-B', '-c',
+                     "from pathlib import Path;import sys;sys.stdout.write(Path('/tmp/capacity-driver-result.json').read_text())",
+                     timeout=20, role='driver', operation='driver-result-read')
+        result = json.loads(raw)
+        require(isinstance(result, dict), 'driver result object required')
+        dump(self.work/'driver-result.json', result)
+        self.report['phase'] = 'driver_result_validate'
+        return result
 
     def execute(self):
         self.report['images']={role:image_identity(role) for role in BINDINGS['images']}
@@ -347,12 +397,11 @@ class Experiment:
         while time.monotonic()<end:
             self.sample()
             exists=docker('exec',self.ids['driver'],'python','-B','-c',
-                          "from pathlib import Path;print(int(Path('/tmp/capacity-driver-result.json').is_file()))",timeout=5)
+                          "from pathlib import Path;print(int(Path('/tmp/capacity-driver-result.json').is_file()))",timeout=5,role='driver',operation='driver-result-poll')
             if exists=='1':break
             time.sleep(1)
         else:raise Refused('fixed driver 240s deadline')
-        docker('cp',self.ids['driver']+':/tmp/capacity-driver-result.json',str(self.work/'driver-result.json'))
-        result=json.loads((self.work/'driver-result.json').read_text())
+        result=self.collect_driver_result()
         require(result.get('passed') is True and result.get('schema_revision')=='v2_44' and
                 'PostgreSQL 18' in result.get('postgres_version',''),'fixed original workload/PG18 failed')
         self.report['driver_summary']={k:result.get(k) for k in ('passed','sent','received','projection','history_http','passive_convergence')}
@@ -360,7 +409,7 @@ class Experiment:
         code="import urllib.request,json;d=json.load(urllib.request.urlopen('http://api:8000/__capacity/metrics',timeout=3));print(json.dumps({'current':d['current'],'last':d['samples'][-1] if d['samples'] else {}}))"
         while time.monotonic()-start<120:
             self.sample('idle')
-            m=json.loads(docker('exec',self.ids['driver'],'python','-B','-c',code,timeout=5))
+            m=json.loads(docker('exec',self.ids['driver'],'python','-B','-c',code,timeout=5,role='driver',operation='idle-metrics'))
             idle.append({'monotonic':time.monotonic(),'metrics':m})
             time.sleep(2)
         dump(self.work/'idle-metrics.json',idle)
@@ -382,9 +431,9 @@ class Experiment:
         for role in ('driver','api','redis','pg'):
             if role not in self.ids:continue
             try:
-                o=inspect(self.ids[role]);ownership(o,self.owner,self.ids[role],role)
-                if o['State']['Running']:docker('stop','--time=10',self.ids[role],timeout=20)
-                o=inspect(self.ids[role]);ownership(o,self.owner,self.ids[role],role)
+                o=inspect(self.ids[role],role=role);ownership(o,self.owner,self.ids[role],role)
+                if o['State']['Running']:docker('stop','--time=10',self.ids[role],timeout=20,role=role)
+                o=inspect(self.ids[role],role=role);ownership(o,self.owner,self.ids[role],role)
                 require(not o['State']['Running'] and o['State'].get('Pid',0)==0,'owned test not stopped')
                 self.report['cleanup'][role]={'id':self.ids[role],'state':'stopped; disposable runner retains until job end'}
             except Exception as exc:
@@ -414,6 +463,7 @@ def main():
     except BaseException as exc:
         exp.report['failure_type']=type(exc).__name__
         if isinstance(exc,Refused):exp.report['failure']=str(exc)
+        if isinstance(exc,CommandFailure):exp.report['command_failure']=exc.evidence
     finally:
         signal.alarm(0)
         for sig in (signal.SIGTERM,signal.SIGHUP,signal.SIGINT):signal.signal(sig,signal.SIG_IGN)

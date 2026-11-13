@@ -157,4 +157,65 @@ class EncryptionSafety(unittest.TestCase):
         with self.assertRaises(r.Refused):r.transfer_spec(json.dumps(s))
 
 
+class DriverTmpfsEvidence(unittest.TestCase):
+    def test_live_owned_driver_exec_reads_tmpfs_and_retains_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            e=r.Experiment.__new__(r.Experiment)
+            e.ids={'driver':'a'*64};e.work=Path(d);e.report={}
+            payload={'passed':False,'synthetic_error':'preserved'}
+            with mock.patch.object(e,'check') as check,mock.patch.object(r,'docker',return_value=json.dumps(payload)) as docker:
+                self.assertEqual(e.collect_driver_result(),payload)
+            check.assert_called_once_with('driver')
+            self.assertEqual(docker.call_count,1)
+            self.assertEqual(docker.call_args.args[:5],('exec','a'*64,'python','-B','-c'))
+            self.assertIn('/tmp/capacity-driver-result.json',docker.call_args.args[5])
+            self.assertEqual(docker.call_args.kwargs['timeout'],20)
+            self.assertEqual(json.loads((e.work/'driver-result.json').read_text()),payload)
+            self.assertEqual(e.report['phase'],'driver_result_validate')
+
+    def test_foreign_driver_refused_before_result_read(self):
+        e=r.Experiment.__new__(r.Experiment);e.report={}
+        with mock.patch.object(e,'check',side_effect=r.Refused('foreign')),mock.patch.object(r,'docker') as docker,self.assertRaises(r.Refused):
+            e.collect_driver_result()
+        docker.assert_not_called()
+
+    def test_invalid_result_never_becomes_success_evidence(self):
+        for payload in ('not json','[]'):
+            with tempfile.TemporaryDirectory() as d:
+                e=r.Experiment.__new__(r.Experiment);e.ids={'driver':'a'*64};e.work=Path(d);e.report={}
+                with mock.patch.object(e,'check'),mock.patch.object(r,'docker',return_value=payload),self.assertRaises((ValueError,r.Refused)):
+                    e.collect_driver_result()
+                self.assertFalse((e.work/'driver-result.json').exists())
+
+
+class CommandDiagnostics(unittest.TestCase):
+    def test_nonzero_is_role_operation_returncode_without_secrets(self):
+        secret=b'postgresql://user:password@host/private?token=sentinel'
+        error=b'Error: container is not running '+secret
+        with mock.patch.object(r.subprocess,'run',return_value=r.subprocess.CompletedProcess([],1,b'',error)):
+            with self.assertRaises(r.CommandFailure) as raised:
+                r.docker('exec','synthetic-id','python','secret-argv',role='driver',operation='driver-result-poll',timeout=5)
+        e=raised.exception.evidence
+        self.assertEqual(e['role'],'driver');self.assertEqual(e['operation'],'driver-result-poll')
+        self.assertEqual(e['returncode'],1);self.assertFalse(e['timed_out'])
+        self.assertEqual(e['stderr_tags'],['container_not_running'])
+        self.assertNotIn('sentinel',json.dumps(e));self.assertNotIn('secret-argv',json.dumps(e))
+
+    def test_timeout_is_distinct_and_stderr_prefix_bounded(self):
+        error=b'permission denied '+b'x'*5000+b'postgresql://private-token'
+        with mock.patch.object(r.subprocess,'run',side_effect=r.subprocess.TimeoutExpired(['secret-argv'],5,stderr=error)):
+            with self.assertRaises(r.CommandFailure) as raised:
+                r.docker('exec','id',role='driver',operation='idle-metrics',timeout=5)
+        e=raised.exception.evidence
+        self.assertIsNone(e['returncode']);self.assertTrue(e['timed_out'])
+        self.assertEqual(e['timeout_seconds'],5);self.assertEqual(e['stderr_prefix_bytes_scanned'],4096)
+        self.assertEqual(e['stderr_tags'],['permission_denied'])
+        self.assertNotIn('private-token',json.dumps(e));self.assertNotIn('secret-argv',str(raised.exception))
+
+    def test_arbitrary_diagnostic_strings_refused(self):
+        for kw in ({'role':'secret-dsn'},{'operation':'secret-url'}):
+            with mock.patch.object(r.subprocess,'run') as run,self.assertRaises(r.Refused):r.docker('exec',**kw)
+            run.assert_not_called()
+
+
 if __name__=='__main__':unittest.main()
