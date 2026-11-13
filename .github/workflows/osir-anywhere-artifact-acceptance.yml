@@ -1,0 +1,213 @@
+name: OSIR Anywhere original artifact native smoke
+
+# Independent reviewed harness, consumed after product source has frozen.
+# No product install/build/repack/sign/publish command belongs in this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      harness_commit:
+        description: Reviewed independent harness full SHA; select this same workflow ref
+        type: string
+        required: true
+      bindings_json:
+        description: Reviewed original build bindings JSON (see harness contract)
+        type: string
+        required: true
+      bindings_sha256:
+        description: SHA-256 of exact raw bindings_json bytes, including whitespace
+        type: string
+        required: true
+      target:
+        description: All requires same Universal artifact on ARM and Intel plus Win x64
+        type: choice
+        default: all
+        options: [all, darwin-universal, win32-x64, win32-arm64]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: osir-artifact-smoke-${{ inputs.harness_commit }}-${{ inputs.bindings_sha256 }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+env:
+  OSIR_HARNESS_COMMIT: ${{ inputs.harness_commit }}
+  OSIR_ACCEPTANCE_BINDINGS: ${{ inputs.bindings_json }}
+  OSIR_ACCEPTANCE_BINDINGS_SHA256: ${{ inputs.bindings_sha256 }}
+  OSIR_ACCEPTANCE_TARGET: ${{ inputs.target }}
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    defaults:
+      run:
+        working-directory: harness
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.harness_commit }}
+          path: harness
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.2
+      - name: Test artifact identity and safe transfer contracts (not native acceptance)
+        run: node --test desktop-workbench/scripts/osir-artifact-acceptance-ci.test.mjs
+      - name: Verify reviewed harness and exact original producer jobs/artifact IDs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs plan
+      - uses: actions/upload-artifact@v6
+        with:
+          name: osir-artifact-producer-bindings-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/osir-artifact-acceptance/reviewed-bindings.json
+            ${{ runner.temp }}/osir-artifact-acceptance/producer-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # Online dependency preparation uses packaged uv/Python and a copied packaged
+  # Connector. The clean-runner smoke consumes that exact dependency cache/lock;
+  # this does not claim network isolation or fully offline product execution.
+  warm-cache:
+    needs: review
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.review.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: harness
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.harness_commit }}
+          path: harness
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.2
+          architecture: ${{ matrix.nodeArch }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.nodeArch }}
+      - name: Download exact immutable original build archive
+        uses: actions/download-artifact@v8
+        with:
+          repository: ousir0/osir-anywhere
+          run-id: ${{ matrix.runId }}
+          artifact-ids: ${{ matrix.artifactId }}
+          github-token: ${{ github.token }}
+          skip-decompress: true
+          digest-mismatch: error
+          path: ${{ runner.temp }}/osir-artifact-acceptance/original-archive
+      - name: Verify full original archive digest before extracting only expected inputs
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs unpack-product '${{ matrix.machine }}'
+      - name: Bind original receipt, final package bytes, source, config and signatures
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs bind '${{ matrix.machine }}'
+      - name: Prepare online dependency cache using original bundled native runtimes
+        env:
+          ACCEPTANCE_ROOT: ${{ runner.temp }}/osir-artifact-acceptance
+        run: node desktop-workbench/scripts/osir-native-smoke-provision.mjs warm-cache --spec "$ACCEPTANCE_ROOT/base-spec.json" --output "$ACCEPTANCE_ROOT/warm"
+      - name: Preserve exact cache tree, resolved Python lock and raw preparation evidence
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs seal-cache '${{ matrix.machine }}'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: osir-offline-cache-${{ matrix.machine }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osir-artifact-acceptance/cache-bundle
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Collect actual preparation evidence, including failure reports
+        if: always()
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs collect '${{ matrix.machine }}' warm
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: osir-native-warm-evidence-${{ matrix.machine }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osir-artifact-acceptance/warm-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  native-smoke:
+    # Successful architecture caches are reusable even if another architecture's
+    # preparation failed. A missing cache fails its own job; no fake smoke report.
+    needs: [review, warm-cache]
+    if: always() && needs.review.result == 'success' && !cancelled()
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.review.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: harness
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.harness_commit }}
+          path: harness
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.2
+          architecture: ${{ matrix.nodeArch }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.nodeArch }}
+      - name: Download same immutable original build archive
+        uses: actions/download-artifact@v8
+        with:
+          repository: ousir0/osir-anywhere
+          run-id: ${{ matrix.runId }}
+          artifact-ids: ${{ matrix.artifactId }}
+          github-token: ${{ github.token }}
+          skip-decompress: true
+          digest-mismatch: error
+          path: ${{ runner.temp }}/osir-artifact-acceptance/original-archive
+      - name: Verify full original archive and bind original final installer
+        run: |
+          node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs unpack-product '${{ matrix.machine }}'
+          node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs bind '${{ matrix.machine }}'
+      - name: Download this architecture's exact online preparation bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: osir-offline-cache-${{ matrix.machine }}-${{ github.run_id }}-${{ github.run_attempt }}
+          digest-mismatch: error
+          path: ${{ runner.temp }}/osir-artifact-acceptance/cache-bundle
+      - name: Verify original bindings, raw report, resolved lock and full dependency cache tree
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs unpack-cache '${{ matrix.machine }}'
+      - name: Attest clean disposable native GUI runner and execute original package smoke
+        env:
+          ACCEPTANCE_ROOT: ${{ runner.temp }}/osir-artifact-acceptance
+        run: |
+          node desktop-workbench/scripts/osir-native-smoke-provision.mjs run \
+            --spec "$ACCEPTANCE_ROOT/base-spec.json" \
+            --cache "$ACCEPTANCE_ROOT/offline/cache" \
+            --cache-report "$ACCEPTANCE_ROOT/offline/dependency-cache.json" \
+            --cache-report-sha256 "$OSIR_CACHE_REPORT_SHA256" \
+            --output "$ACCEPTANCE_ROOT/smoke" \
+            --runner-mode disposable-clean-runner
+      - name: Verify final bytes unchanged and preserve actual reports/probes/screenshots
+        if: always()
+        run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs collect '${{ matrix.machine }}' smoke
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: osir-native-smoke-evidence-${{ matrix.machine }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osir-artifact-acceptance/smoke-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Main collects raw per-machine smoke + separate native-upgrade reports with
+  # osir-native-acceptance-aggregate.mjs. No publisher acceptance is synthesized.

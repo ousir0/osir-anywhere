@@ -1,0 +1,3 @@
+# Reviewed release provenance hashes raw bytes on every platform. Never let
+# runner core.autocrlf convert tracked input bytes during checkout.
+* -text
