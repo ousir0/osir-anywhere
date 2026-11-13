@@ -18,6 +18,11 @@ jobs:
       run:
         shell: pwsh
     steps:
+      - name: Preserve exact LF dependency input bytes
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - name: Checkout preflight inputs without persisted credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
