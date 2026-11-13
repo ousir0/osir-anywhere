@@ -1,0 +1,309 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { verify } from 'node:crypto';
+import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
+import { fileIdentity, fingerprintTree } from './osir-native-smoke.mjs';
+import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
+import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
+import { packagedDiscoveryProbe, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome } from './osir-native-upgrade-acceptance.runtime.mjs';
+import { electronFromLock, reuseExtractedRuntime } from './osir-native-upgrade-acceptance.extract.mjs';
+import { collectRaw, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
+
+const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
+const identity = data => ({ size: data.length, sha256: digest(data) });
+
+test('upgrade waits past Loading for the shared welcome gate before allowing a screenshot', async () => {
+  const ready = { ready: true, branded: true, action: { text: 'Sign in to OSIR Anywhere', enabled: true, visible: true } };
+  let calls = 0, observed, screenshotAllowed = false;
+  const inspector = { evaluate: async () => { assert.equal(screenshotAllowed, false); return ++calls === 1 ? { ready: true, branded: false, action: null } : ready; } };
+  assert.deepEqual(await waitForUpgradeWelcome(inspector, 7, Date.now() + 2000, async value => { observed = value; }), ready);
+  screenshotAllowed = true; assert.equal(calls, 2); assert.deepEqual(observed, ready);
+});
+
+test('a disabled welcome action times out and preserves the failed renderer observation', async () => {
+  const disabled = { ready: true, branded: true, action: { text: 'Sign in', enabled: false, visible: true } };
+  let observed;
+  await assert.rejects(waitForUpgradeWelcome({ evaluate: async () => disabled }, 7, Date.now() + 30, async value => { observed = value; }), /welcome action/);
+  assert.deepEqual(observed, disabled);
+});
+
+test('upgrade NSIS path accepts exact zero PE revision, rejects other revisions and keeps ASAR version exact', async t => {
+  const f = await fixture(t), require = createRequire(import.meta.url), asar = require('@electron/asar');
+  const source = join(f.root, 'tiny-windows-app'), destination = join(f.root, 'installed'), resources = join(destination, 'resources');
+  await mkdir(join(source, 'dist'), { recursive: true }); await mkdir(resources, { recursive: true });
+  const config = { synthetic: true }; await writeFile(join(source, 'dist/config.json'), bytes(config));
+  const packageMetadata = { name: 'osir-anywhere-desktop-workbench', productName: 'OSIR Anywhere', version: '2.2.0', main: 'dist/electron/main.js' };
+  const archive = join(resources, 'app.asar');
+  await writeFile(join(source, 'package.json'), bytes(packageMetadata)); await asar.createPackage(source, archive);
+  const pe = Buffer.alloc(128); pe.writeUInt16LE(0x5a4d); pe.writeUInt32LE(64, 60); pe.writeUInt32LE(0x4550, 64); pe.writeUInt16LE(process.arch === 'arm64' ? 0xaa64 : 0x8664, 68);
+  await writeFile(join(destination, 'OSIR Anywhere.exe'), pe);
+  let metadata = { ProductName: 'OSIR Anywhere', ProductVersion: '2.2.0.0', FileVersion: '2.2.0' };
+  const spec = { ...f.spec, expected: { ...f.spec.expected, configSha256: fingerprint(config) } };
+  const adapter = new UpgradeAdapter({ work: f.root, spec, env: {}, evidence: async () => {} });
+  adapter.run = async (_exe, _args, label) => label.endsWith('-pe-metadata') ? JSON.stringify(metadata) : '';
+  const artifact = { ...await fileIdentity(spec.finalInstallerPath) };
+  assert.equal((await adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final')).pkg.version, '2.2.0');
+  metadata = { ...metadata, ProductVersion: '2.2.0.1' };
+  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final'), /product\/version mismatch/);
+  metadata.ProductVersion = '2.2.0.0'; metadata.FileVersion = '2.2.0.1';
+  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final'), /product\/version mismatch/);
+  metadata.FileVersion = '2.2.0'; await rm(archive);
+  await writeFile(join(source, 'package.json'), bytes({ ...packageMetadata, version: '2.2.0.0' })); await asar.createPackage(source, archive);
+  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final'), /ASAR product\/version mismatch/);
+});
+
+async function fixture(t) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'osir-upgrade-unit-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const save = async (name, value) => { const path = join(root, name); await writeFile(path, bytes(value)); return path; };
+  const files = [{ path: PACKAGE_PATH, ...identity(originalPackage), executable: false }, { path: 'connector/synthetic.txt', ...identity(Buffer.from('same')), executable: false }];
+  const source = { schemaVersion: 1, upstreamGitHead: 'a'.repeat(40), sourceSha256: fingerprint(files), files };
+  const plan = { sourceSha256: source.sourceSha256, configSha256: 'c'.repeat(64), checkoutHead: 'b'.repeat(40), upstreamGitHead: source.upstreamGitHead,
+    target: 'darwin-universal', version: '2.2.0', dependencies: { lockSha256: 'd'.repeat(64) } };
+  const finalBytes = Buffer.from('NOT AN EXECUTABLE: synthetic final fixture');
+  const artifact = { filename: 'osir-anywhere-2.2.0-darwin-universal.dmg', ...identity(finalBytes), systemSignature: 'unsigned' };
+  const finalInstallerPath = join(root, artifact.filename); await writeFile(finalInstallerPath, finalBytes);
+  const signature = { schemaVersion: 1, platform: 'darwin', artifactSha256: artifact.sha256, systemSignature: 'unsigned' };
+  const systemSignatureReportPath = await save('signature.json', signature);
+  const signatureIdentity = await fileIdentity(systemSignatureReportPath);
+  const receipt = { schemaVersion: 1, plan, artifact, systemSignatureReportSha256: signatureIdentity.sha256 };
+  const buildReceiptPath = await save('receipt.json', receipt);
+  const expected = { ...plan, artifactSha256: artifact.sha256, artifactSize: artifact.size, systemSignatureReportSha256: signatureIdentity.sha256 }; delete expected.dependencies;
+  const directory = join(root, 'baseline'); await mkdir(directory);
+  const derivative = versionOnlyDerivative(originalPackage), baselineBytes = Buffer.from('NOT AN EXECUTABLE: synthetic controlled baseline');
+  const baselineArtifact = { filename: 'TEST-ONLY-osir-anywhere-2.1.0-darwin-universal.dmg', ...identity(baselineBytes), systemSignature: 'unsigned' };
+  await writeFile(join(directory, baselineArtifact.filename), baselineBytes);
+  const baseline = { schemaVersion: 1, kind: 'controlled-version-only-derivative', result: 'prepared', releaseEligible: false, historicalBaseline: false,
+    sourceSha256: source.sourceSha256, version: BASELINE_VERSION, target: plan.target, configSha256: plan.configSha256,
+    parentArtifactSha256: artifact.sha256, metadataDiff: derivative.metadataDiff, artifact: baselineArtifact, artifactSha256: baselineArtifact.sha256,
+    reusedOutputs: { mode: 'compiled-checkout', compiledReceiptSha256: '', parentCompiledOutputsSha256: 'e'.repeat(64), wholeCompiledTreeVerified: true, outputsSha256: 'e'.repeat(64), rendererSha256: 'f'.repeat(64), rebuilt: false }, evidence: [] };
+  const inventory = { files: files.map(file => file.path === PACKAGE_PATH ? { ...file, ...identity(derivative.changed) } : file) }; inventory.sourceSha256 = fingerprint(inventory.files);
+  baseline.derivedSourceSha256 = inventory.sourceSha256;
+  const evidence = await evidenceWriter(directory, baseline);
+  await evidence('original-package.json', originalPackage); await evidence('derivative-package.json', derivative.changed);
+  await evidence('parent-build-receipt.json', bytes(receipt)); await evidence('parent-source-provenance.json', bytes(source));
+  await evidence('derivative-source-inventory.json', bytes(inventory)); await evidence('metadata-diff.json', bytes(derivative.metadataDiff));
+  await evidence('compiled-receipt.json', bytes({ planSha256: fingerprint(plan), outputsSha256: baseline.reusedOutputs.outputsSha256 }));
+  baseline.reusedOutputs.compiledReceiptSha256 = (await fileIdentity(join(directory, 'compiled-receipt.json'))).sha256;
+  await evidence('baseline-system-signature.json', bytes({ ...signature, artifactSha256: baselineArtifact.sha256 }));
+  baseline.systemSignatureReportSha256 = (await fileIdentity(join(directory, 'baseline-system-signature.json'))).sha256;
+  const baselineReceiptPath = join(directory, 'baseline-receipt.json'); await writeFile(baselineReceiptPath, bytes(baseline));
+  const spec = { schemaVersion: 1, buildReceiptPath, finalInstallerPath, systemSignatureReportPath, expected, runner: { nativeMachine: 'darwin-arm64' },
+    baselineReceiptPath, baselineReceiptSha256: (await fileIdentity(baselineReceiptPath)).sha256 };
+  const updateBaseline = async patch => { Object.assign(baseline, patch); await writeFile(baselineReceiptPath, bytes(baseline)); spec.baselineReceiptSha256 = (await fileIdentity(baselineReceiptPath)).sha256; };
+  return { root, directory, spec, baseline, source, derivative, updateBaseline };
+}
+
+function discoveryFixture() {
+  return { kind: 'packaged-native-service-integration', syntheticManifest: true, temporaryTestKey: true, serverVersionUnchanged: true,
+    actualVersions: { desktop: '2.2.0', manifestBaseline: '2.2.0', manifestPatch: '2.2.1', serverBefore: '2.2.0', serverAfter: '2.2.0' },
+    baseline: { available: false }, patch: { available: true, latestVersion: '2.2.1', error: null }, invalidSignature: { error: 'checkFailed' },
+    packageVersion: '2.2.0', packaged: true, electron: '39.2.7', serviceSha256: 'a'.repeat(64), servicePath: '/synthetic/app.asar/dist/electron/desktop-updates.js',
+    requests: ['control-health', 'manifest', 'manifest', 'health', 'manifest', 'control-health'].map(kind => ({ kind, version: '2.2.0', method: 'GET', transport: 'synthetic-fetcher' })), installerCalls: 0 };
+}
+
+test('CLI requires known modes, absolute fresh paths and no hidden isolation bypass flags', () => {
+  assert.deepEqual(parseArguments(['run', '--spec', '/a.json', '--output', '/out']), { action: 'run', spec: '/a.json', output: '/out' });
+  for (const args of [['run', '--spec', 'relative', '--output', '/out'], ['run', '--spec', '/a', '--spec', '/b'], ['run', '--spec', '/a', '--output', '/b', '--skip-validation', '1'], ['_isolated']]) assert.throws(() => parseArguments(args));
+});
+
+test('baseline changes one version token, preserving Unicode, formatting and every other byte', () => {
+  const { changed, metadataDiff } = versionOnlyDerivative(originalPackage);
+  assert.equal(changed.toString(), originalPackage.toString().replace('"2.2.0"', '"2.1.0"'));
+  assert.equal(metadataDiff.length, 1); assert.equal(metadataDiff[0].pointer, '/version');
+  assert.equal(changed.subarray(metadataDiff[0].byteOffset, metadataDiff[0].byteOffset + 5).toString(), '2.1.0');
+  for (const source of [originalPackage.toString().replace('"2.2.0"', '"2.1.0"'), originalPackage.toString().replace('"version":', '"nested":{"version":"2.2.0"},"version":')]) assert.throws(() => versionOnlyDerivative(Buffer.from(source)));
+});
+
+test('independent copy rebases contained links, shares no files and rejects escaping links', async t => {
+  const f = await fixture(t), source = join(f.root, 'source'), copy = join(f.root, 'copy');
+  await mkdir(source); await mkdir(copy); await writeFile(join(source, 'data'), 'frozen'); await symlink(join(source, 'data'), join(source, 'link'));
+  await copyIndependent(join(source, 'data'), join(copy, 'data'), source, copy);
+  await copyIndependent(join(source, 'link'), join(copy, 'link'), source, copy);
+  assert.equal(await realpath(join(copy, 'link')), join(copy, 'data'));
+  await writeFile(join(copy, 'data'), 'derived'); assert.equal(await readFile(join(source, 'data'), 'utf8'), 'frozen');
+  assert.equal((await lstat(join(copy, 'data'))).nlink, 1);
+  await symlink(f.spec.finalInstallerPath, join(source, 'escape'));
+  await assert.rejects(copyIndependent(join(source, 'escape'), join(copy, 'escape'), source, copy), /escapes/);
+});
+
+test('derivative inventory rejects any non-version change', async t => {
+  const f = await fixture(t), copy = join(f.root, 'source-copy');
+  await mkdir(dirname(join(copy, PACKAGE_PATH)), { recursive: true }); await mkdir(join(copy, 'connector'));
+  await writeFile(join(copy, PACKAGE_PATH), f.derivative.changed, { mode: 0o644 }); await writeFile(join(copy, 'connector/synthetic.txt'), 'same', { mode: 0o644 });
+  assert.equal((await derivativeInventory(f.source, copy, f.derivative.metadataDiff)).sourceSha256, f.baseline.derivedSourceSha256);
+  await writeFile(join(copy, 'connector/synthetic.txt'), 'mutated');
+  await assert.rejects(derivativeInventory(f.source, copy, f.derivative.metadataDiff), /Non-version/);
+});
+
+test('Windows retains source executable metadata without claiming POSIX mode verification', async t => {
+  const f = await fixture(t), copy = join(f.root, 'windows-source-copy');
+  await mkdir(dirname(join(copy, PACKAGE_PATH)), { recursive: true }); await mkdir(join(copy, 'connector'));
+  await writeFile(join(copy, PACKAGE_PATH), f.derivative.changed, { mode: 0o644 }); await writeFile(join(copy, 'connector/synthetic.txt'), 'same', { mode: 0o644 });
+  const source = { ...f.source, files: f.source.files.map(file => file.path.startsWith('connector/') ? { ...file, executable: true } : file) };
+  const inventory = await derivativeInventory(source, copy, f.derivative.metadataDiff, 'win32');
+  assert.equal(inventory.files.find(file => file.path.startsWith('connector/')).executable, true);
+  if (process.platform !== 'win32') await assert.rejects(derivativeInventory(source, copy, f.derivative.metadataDiff), /Non-version/);
+});
+
+test('baseline transfer binds the same harness/run/machine and detects tampering before installation', async t => {
+  const f = await fixture(t), output = join(f.root, 'baseline-bundle');
+  const harness = { commit: 'd'.repeat(40), runId: 42, runAttempt: 1 };
+  const transfer = await sealBaseline(f.spec, f.directory, output, harness);
+  assert.equal(transfer.files.length, f.baseline.evidence.length + 2);
+  const spec = await transferredRunSpec(f.spec, output, harness);
+  assert.equal(spec.baselineReceiptSha256, f.spec.baselineReceiptSha256);
+  await assert.rejects(transferredRunSpec(f.spec, output, { ...harness, runAttempt: 2 }), /different harness/);
+  await assert.rejects(transferredRunSpec({ ...f.spec, runner: { nativeMachine: 'darwin-x64' } }, output, harness), /machine/);
+  await writeFile(join(output, 'unexpected.json'), '{}');
+  await assert.rejects(transferredRunSpec(f.spec, output, harness), /Unexpected/);
+  await rm(join(output, 'unexpected.json'));
+  await writeFile(join(output, f.baseline.artifact.filename), 'tampered');
+  await assert.rejects(transferredRunSpec(f.spec, output, harness));
+});
+
+test('CI collector preserves raw failure evidence and refuses synthetic native passing claims', async t => {
+  const f = await fixture(t), directory = join(f.root, 'synthetic-result'); await mkdir(directory);
+  const raw = Buffer.from('actual failure log'); await writeFile(join(directory, 'probe.log'), raw);
+  const report = { ...f.spec.expected, schemaVersion: 1, scope: 'native-upgrade-acceptance', evidenceMode: 'synthetic', result: 'simulated',
+    nativeMachines: ['darwin-arm64'], checks: { upgradeDataPreserved: false, updateDiscovery: false }, evidence: [{ path: 'probe.log', ...identity(raw) }] };
+  await writeFile(join(directory, 'native-upgrade-acceptance.json'), bytes(report));
+  await mkdir(join(directory, 'work')); await writeFile(join(directory, 'work/private-temporary-file'), 'not collected');
+  const collected = await collectRaw(f.spec, directory, join(f.root, 'collected'), { runId: 42 }, 'run');
+  assert.equal(collected.result, 'failed'); assert.match(collected.failures.join(','), /not actually passed/);
+  assert.equal(await readFile(join(f.root, 'collected/probe.log'), 'utf8'), raw.toString());
+  await assert.rejects(lstat(join(f.root, 'collected/work')), { code: 'ENOENT' });
+});
+
+test('spec pins final 2.2.0, original receipt and explicit extraction inputs', async t => {
+  const f = await fixture(t); assert.equal(validateSpec(f.spec), f.spec);
+  assert.throws(() => validateSpec({ ...f.spec, expected: { ...f.spec.expected, version: '2.1.0' } }));
+  const source = { checkout: '/frozen', compiledReceiptPath: '/compiled.json', compiledReceiptSha256: 'a'.repeat(64), mode: 'final-installer-copy', dependencyLockPath: '/resolved-yarn.lock' };
+  assert.doesNotThrow(() => validateSpec({ ...f.spec, baselineSource: source }, 'prepare-baseline'));
+  assert.throws(() => validateSpec({ ...f.spec, baselineSource: { ...source, dependencyLockPath: undefined } }, 'prepare-baseline'));
+});
+
+test('controlled baseline binds source, original final bytes, exact metadata diff and raw evidence', async t => {
+  const f = await fixture(t); assert.equal((await bindBaseline(f.spec)).baseline.kind, 'controlled-version-only-derivative');
+  await f.updateBaseline({ historicalBaseline: true }); await assert.rejects(bindBaseline(f.spec), /controlled baseline/);
+  await f.updateBaseline({ historicalBaseline: false, parentArtifactSha256: '0'.repeat(64) }); await assert.rejects(bindBaseline(f.spec), /different final/);
+});
+
+test('changed evidence, changed baseline bytes and path escapes fail before native execution', async t => {
+  for (const mutation of ['evidence', 'artifact', 'path']) {
+    const f = await fixture(t);
+    if (mutation === 'evidence') await writeFile(join(f.directory, 'metadata-diff.json'), '{}');
+    if (mutation === 'artifact') await writeFile(join(f.directory, f.baseline.artifact.filename), 'changed');
+    if (mutation === 'path') await f.updateBaseline({ artifact: { ...f.baseline.artifact, filename: '../escape.dmg' } });
+    await assert.rejects(bindBaseline(f.spec));
+  }
+});
+
+test('Electron version comes from the SHA-bound resolved lock, not a semver range/guess', () => {
+  assert.equal(electronFromLock('"electron@npm:^39.2.7":\n  resolution: "electron@npm:39.2.7"\n'), '39.2.7');
+  assert.throws(() => electronFromLock('electron: ^39.2.7'));
+  assert.throws(() => electronFromLock('  resolution: "electron@npm:39.2.7"\n  resolution: "electron@npm:40.0.0"\n'));
+});
+
+test('small ASAR extraction reuses shipped renderer/runtime bytes and preserves contained resource links', async t => {
+  const f = await fixture(t), source = join(f.root, 'asar-input'), raw = join(f.root, 'raw-asar'), resources = join(f.root, 'resources'), copy = join(f.root, 'packaged-copy');
+  for (const name of ['dist/electron', 'renderer/out', 'node_modules/synthetic']) await mkdir(join(source, name), { recursive: true });
+  await writeFile(join(source, 'dist/electron/main.js'), '/* synthetic; never executed */');
+  await writeFile(join(source, 'renderer/out/index.html'), '<p>synthetic</p>');
+  await writeFile(join(source, 'node_modules/synthetic/package.json'), '{"name":"synthetic","version":"0.0.0"}');
+  for (const name of ['uv', 'python']) { await mkdir(join(resources, name), { recursive: true }); await writeFile(join(resources, name, 'synthetic-data'), 'not executable'); }
+  await symlink('synthetic-data', join(resources, 'python/alias'));
+  const require = createRequire(import.meta.url), asar = require('@electron/asar'), archive = join(f.root, 'tiny-synthetic.asar');
+  await asar.createPackage(source, archive); assert.ok((await lstat(archive)).size < 8192);
+  asar.extractAll(archive, raw);
+  const subsets = await reuseExtractedRuntime(raw, resources, copy);
+  assert.equal(subsets.length, 5);
+  for (const name of ['dist', 'renderer/out', 'node_modules']) assert.equal(await fingerprintTree(join(source, name)), await fingerprintTree(join(copy, name)));
+  assert.equal(await realpath(join(copy, 'build/python/alias')), join(copy, 'build/python/synthetic-data'));
+  await writeFile(join(copy, 'renderer/out/index.html'), 'independent');
+  assert.equal(await readFile(join(source, 'renderer/out/index.html'), 'utf8'), '<p>synthetic</p>');
+});
+
+test('report rejects Server-coupled discovery, bad signatures, downloads and non-packaged services', () => {
+  assert.doesNotThrow(() => validateDiscovery(discoveryFixture()));
+  for (const patch of [{ serverVersionUnchanged: false }, { actualVersions: { ...discoveryFixture().actualVersions, serverAfter: '2.2.1' } }, { invalidSignature: { error: null } }, { installerCalls: 1 }, { packaged: false }, { servicePath: '/source/desktop-updates.js' }, { requests: [] }]) assert.throws(() => validateDiscovery({ ...discoveryFixture(), ...patch }));
+});
+
+function fakeAdapter(context, { corruptData = false, badDiscovery = false } = {}) {
+  let snapshots = 0;
+  return { hardware: async () => {}, installBaseline: async () => ({}), seedBaseline: async () => ({ synthetic: true }),
+    snapshot: async () => [{ path: 'notes.json', size: 4, sha256: corruptData && ++snapshots > 1 ? '0'.repeat(64) : '1'.repeat(64) }],
+    installFinal: async () => ({}), verifyFinal: async () => ({ dataPreserved: true, baselineVersion: '2.1.0', finalVersion: '2.2.0', sameInstallPath: true, sameUserData: true, rendererStoragePreserved: true }),
+    discovery: async () => ({ ...discoveryFixture(), installerCalls: badDiscovery ? 1 : 0 }) };
+}
+
+test('injected orchestration never claims native passing checks, even if simulated observations pass', async t => {
+  const f = await fixture(t), output = join(f.root, 'simulation');
+  const report = await runAcceptance(f.spec, output, { adapterFactory: fakeAdapter, isolationVerifier: async () => ({ home: '/synthetic' }) });
+  assert.equal(report.result, 'simulated'); assert.equal(report.evidenceMode, 'synthetic');
+  assert.deepEqual(report.checks, { upgradeDataPreserved: false, updateDiscovery: false });
+  assert.deepEqual(report.simulatedChecks, { upgradeDataPreserved: true, updateDiscovery: true });
+  assert.throws(() => validateNativeReport(report, f.spec.expected, 'native-upgrade-acceptance'), /Only passed native reports/);
+  for (const item of report.evidence) assert.deepEqual(await fileIdentity(join(output, item.path)), { size: item.size, sha256: item.sha256 });
+  await assert.rejects(runAcceptance(f.spec, output));
+});
+
+test('data loss and false PATCH observations cannot become passed reports', async t => {
+  for (const options of [{ corruptData: true }, { badDiscovery: true }]) {
+    const f = await fixture(t), report = await runAcceptance(f.spec, join(f.root, 'failed'), { adapterFactory: context => fakeAdapter(context, options), isolationVerifier: async () => ({ home: '/synthetic' }) });
+    assert.equal(report.result, 'failed'); assert.deepEqual(report.checks, { upgradeDataPreserved: false, updateDiscovery: false }); assert.ok(report.failure);
+  }
+});
+
+test('missing native authorization produces a truthful failed report without installing or launching', async t => {
+  if (process.env.GITHUB_ACTIONS === 'true') return t.skip('Local refusal control; native CI uses real authorized mode');
+  const f = await fixture(t), report = await runAcceptance(f.spec, join(f.root, 'native-refusal'));
+  assert.equal(report.result, 'failed'); assert.equal(report.evidenceMode, 'native');
+  assert.deepEqual(report.nativeMachines, []); assert.deepEqual(report.execution, { baselineInstallAttempted: false, finalInstallAttempted: false });
+  assert.deepEqual(report.checks, { upgradeDataPreserved: false, updateDiscovery: false });
+  await assert.rejects(prepareBaseline({ ...f.spec, baselineSource: { checkout: f.root, compiledReceiptPath: '/compiled', compiledReceiptSha256: 'a'.repeat(64) } }, join(f.root, 'must-not-build')), /GitHub-hosted/);
+});
+
+test('serialized probe exercises the real DesktopUpdateService source in synthetic Electron context', async t => {
+  const f = await fixture(t), require = createRequire(import.meta.url), ts = require('typescript');
+  const electronRoot = fileURLToPath(new URL('../electron/', import.meta.url));
+  const cache = new Map();
+  const load = name => {
+    if (name === './update-installer-native') return { prepareNativeInstaller: async () => { throw new Error('No native calls permitted in this unit fixture'); }, InstallerNativeValidationError: Error };
+    if (name.startsWith('node:')) return require(name);
+    assert.match(name, /^\.\/[a-z-]+$/);
+    if (cache.has(name)) return cache.get(name).exports;
+    const file = join(electronRoot, `${name.slice(2)}.ts`), module = { exports: {} }; cache.set(name, module);
+    const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    vm.runInNewContext('(function(require,module,exports){' + compiled + '\n})', { Buffer, URL, AbortController, TextDecoder, Response, setTimeout, clearTimeout, process }, { filename: file })(load, module, module.exports);
+    return module.exports;
+  };
+  const resourceRoot = process.platform === 'win32' ? 'C:\\controlled\\Resources' : '/controlled/Resources';
+  const service = load('./desktop-updates'), servicePath = join(resourceRoot, 'app.asar/dist/electron/desktop-updates.js');
+  const probeRequire = name => {
+    if (name === 'electron') return { app: { isPackaged: true, getVersion: () => '2.2.0', getPath: () => f.root } };
+    if (name === servicePath) return service;
+    if (name === './dist/electron/release-manifest.js') return load('./release-manifest');
+    if (name === './package.json') return { version: '2.2.0' };
+    if (name === 'node:fs') return { ...require(name), readFileSync: (file, ...args) => file === servicePath ? Buffer.from('synthetic-packaged-service-bytes') : require(name).readFileSync(file, ...args) };
+    return require(name);
+  };
+  probeRequire.resolve = name => { assert.equal(name, './dist/electron/desktop-updates.js'); return servicePath; };
+  const runtimeProcess = { resourcesPath: resourceRoot, platform: process.platform === 'win32' ? 'win32' : 'darwin', arch: process.arch, versions: { electron: '39.2.7' }, getBuiltinModule: () => ({ createRequire: () => probeRequire }) };
+  const result = await vm.runInNewContext(`(${packagedDiscoveryProbe.toString()})()`, { process: runtimeProcess, Response, Buffer });
+  assert.deepEqual(Array.from(result.requests, request => `${request.kind}:${request.method}`), ['control-health:GET', 'manifest:GET', 'manifest:GET', 'health:GET', 'manifest:GET', 'control-health:GET']);
+  validateDiscovery(JSON.parse(JSON.stringify(result)));
+  assert.equal(result.privateKeyPersisted, false); assert.equal(result.installerCalls, 0);
+  for (const [i, envelope] of result.envelopes.entries()) assert.equal(verify('RSA-SHA256', Buffer.from(envelope.payload, 'base64'), result.publicKeyPem, Buffer.from(envelope.signature, 'base64')), i < 2);
+  assert.ok(result.requests.every(request => request.method === 'GET'));
+  assert.equal(result.requests.filter(request => request.kind === 'health').length, 1);
+  assert.equal(Object.keys(result).some(key => /privatekey/i.test(key) && key !== 'privateKeyPersisted'), false);
+  assert.equal(SEED_SETTINGS.startConnectorOnLaunch, false);
+});
