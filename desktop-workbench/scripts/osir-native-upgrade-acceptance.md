@@ -4,6 +4,27 @@
 
 **当前工具测试不代表原生验收通过。** 必须在 remote CI 真正运行后，才可能得到 `result: "passed"`。本机不重建、不安装、不启动产品，不生成大测试包。
 
+## 2026-11-14：独立 harness review 源码依赖修复
+
+实际 run `43520027257`（harness `dfd454fd82f469c57fd2df1e7d76142d5f63acf4`）在 review 的合成探针测试失败：`ENOENT desktop-workbench/electron/desktop-updates.ts`。原 producer/archive 绑定通过；测试为 22 pass / 1 fail / 1 skip，baseline 和三机原生验收均未开始。原因是独立 harness 不含产品源码，而测试此前隐式读取相邻 `electron/`；本地完整产品树掩盖了此依赖。
+
+最小修复仅涉及本独立 workflow、CI 接线、两份定向测试及本说明。review 在原绑定校验后，从 `steps.upgrade.outputs.source_commit` 单独 sparse checkout `osir-source.json` 和探针需要的 5 个 TypeScript 文件。测试通过 `OSIR_UPGRADE_TEST_SOURCE_ROOT` 显式读取，校验实际 Git HEAD、完整 source inventory 指纹及每个读取文件的 size/SHA256；CI 缺此配置即失败，既不跳过探针，也不退回 harness 中的同名源码。不会修改 frozen product 或让合成结果成为 native passed。
+
+独立 harness（没有相邻 `desktop-workbench/electron/`）实测：本机模式 25 pass / 0 skip / 0 fail；`GITHUB_ACTIONS=true` 的 CI 环境复现模式 24 pass / 1 skip / 0 fail，保留的 skip 仅为已有本机拒绝对照，原失败探针已执行通过。新增回归拒绝错误 commit、错误 inventory 和被修改的 TS 字节。
+
+主控将此补丁纳入同一独立 harness 分支并冻结新完整 SHA `HARNESS_SHA` 后，**新 dispatch** 已注册的 upgrade workflow；不要 rerun 旧 run（它仍执行旧 SHA）。继续使用原 build `43514290185` 的同一份 raw bindings，SHA256 `29f57e60dd80c14272618d5efa876dd4ec494cad936ee98cd26139f14497adf2`、`target=all`，不重建原包、不重做 Mac warm cache：
+
+```sh
+gh workflow run osir-anywhere-upgrade-acceptance.yml \
+  --repo ousir0/osir-anywhere --ref codex/native-upgrade-acceptance-20261114 \
+  -f harness_commit="$HARNESS_SHA" \
+  -F bindings_json=@/absolute/reviewed-bindings.json \
+  -f bindings_sha256=29f57e60dd80c14272618d5efa876dd4ec494cad936ee98cd26139f14497adf2 \
+  -f target=all
+```
+
+独立 checkout 手工跑定向测试时，也须提供 `OSIR_UPGRADE_TEST_SOURCE_ROOT`（独立冻结产品 checkout 的仓库根目录）、原样 `OSIR_ACCEPTANCE_BINDINGS` / `OSIR_ACCEPTANCE_BINDINGS_SHA256` 以及可解析固定测试工具的 `NODE_PATH`。完整产品开发树仍支持相邻源码作本机测试；CI 必须使用显式冻结输入。本次没有提交、推送、dispatch 或执行原生安装。后续原生封装/安装/GUI 仍需真实 CI 观察，不宣称已通过。
+
 ## 边界
 
 - 2.1.0 baseline 是从最终 2.2.0 冻结源派生的 **test-only** 包。唯一源文件变化是 `desktop-workbench/package.json` 的 `/version`。不是曾发布的旧版，不使用旧签名已损坏的本机 POC，不证明历史数据库/旧 schema 迁移。
@@ -85,7 +106,7 @@ jobs:
 # 在独立 harness checkout 的仓库根目录；HARNESS_SHA 是独立分支的完整 40 位 SHA。
 # bindings.json 是前一轮主控审核的原样 JSON 文件，保留原字节/换行。
 gh workflow run osir-anywhere-artifact-acceptance.yml \
-  --repo ousir0/osir-anywhere --ref "$HARNESS_SHA" \
+  --repo ousir0/osir-anywhere --ref codex/native-upgrade-acceptance-20261114 \
   -f harness_commit="$HARNESS_SHA" \
   -F bindings_json=@/absolute/reviewed-bindings.json \
   -f bindings_sha256="$BINDINGS_SHA256" -f target=all

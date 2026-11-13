@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TOOL_VERSIONS, linkTools, prepareSpec } from './osir-native-upgrade-acceptance.ci.mjs';
-import { bytes } from './osir-anywhere-release-common.mjs';
+import { DISCOVERY_TEST_MODULES, TOOL_VERSIONS, discoveryTestSources, linkTools, prepareSpec } from './osir-native-upgrade-acceptance.ci.mjs';
+import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'osir-upgrade-ci-unit-')));
@@ -51,4 +52,25 @@ test('a wrong tool version cannot silently use an unreviewed packager', async t 
   await mkdir(join(tools, 'node_modules/electron-builder'), { recursive: true });
   await writeFile(join(tools, 'node_modules/electron-builder/package.json'), '{"version":"0.0.0"}');
   await assert.rejects(linkTools(f.checkout, tools), /version mismatch/);
+});
+
+test('sparse frozen discovery inputs require the reviewed commit, inventory and exact module bytes', async t => {
+  const f = await fixture(t), electron = join(f.checkout, 'desktop-workbench/electron'); await mkdir(electron, { recursive: true });
+  const files = [];
+  for (const name of DISCOVERY_TEST_MODULES) {
+    const raw = Buffer.from(`// synthetic ${name}; never product execution\n`);
+    await writeFile(join(electron, `${name}.ts`), raw);
+    files.push({ path: `desktop-workbench/electron/${name}.ts`, size: raw.length, sha256: digest(raw), executable: false });
+  }
+  const source = { schemaVersion: 1, sourceSha256: fingerprint(files), files };
+  await writeFile(join(f.checkout, 'osir-source.json'), bytes(source));
+  const git = args => execFileSync('git', args, { cwd: f.checkout, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  git(['init', '--quiet']); git(['add', '.']);
+  git(['-c', 'user.name=Upgrade unit fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '--no-gpg-sign', '-m', 'synthetic source fixture']);
+  const bindings = { sourceCommit: git(['rev-parse', 'HEAD']).trim(), sourceSha256: source.sourceSha256 };
+  assert.equal((await discoveryTestSources(f.checkout, bindings)).size, DISCOVERY_TEST_MODULES.length);
+  await assert.rejects(discoveryTestSources(f.checkout, { ...bindings, sourceCommit: '0'.repeat(40) }), /reviewed product commit/);
+  await assert.rejects(discoveryTestSources(f.checkout, { ...bindings, sourceSha256: '0'.repeat(64) }), /inventory/);
+  await writeFile(join(electron, 'desktop-updates.ts'), '// changed source');
+  await assert.rejects(discoveryTestSources(f.checkout, bindings), /source changed/);
 });

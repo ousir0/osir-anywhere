@@ -14,7 +14,8 @@ import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
 import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
 import { packagedDiscoveryProbe, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome } from './osir-native-upgrade-acceptance.runtime.mjs';
 import { electronFromLock, reuseExtractedRuntime } from './osir-native-upgrade-acceptance.extract.mjs';
-import { collectRaw, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
+import { collectRaw, discoveryTestSources, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
+import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
 
 const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
 const identity = data => ({ size: data.length, sha256: digest(data) });
@@ -273,6 +274,9 @@ test('missing native authorization produces a truthful failed report without ins
 
 test('serialized probe exercises the real DesktopUpdateService source in synthetic Electron context', async t => {
   const f = await fixture(t), require = createRequire(import.meta.url), ts = require('typescript');
+  const checkout = process.env.OSIR_UPGRADE_TEST_SOURCE_ROOT;
+  if (process.env.GITHUB_ACTIONS === 'true') assert.ok(checkout, 'CI must explicitly supply the reviewed frozen product test checkout');
+  const sources = checkout ? await discoveryTestSources(checkout, reviewedBindings(process.env.OSIR_ACCEPTANCE_BINDINGS, process.env.OSIR_ACCEPTANCE_BINDINGS_SHA256)) : null;
   const electronRoot = fileURLToPath(new URL('../electron/', import.meta.url));
   const cache = new Map();
   const load = name => {
@@ -281,7 +285,9 @@ test('serialized probe exercises the real DesktopUpdateService source in synthet
     assert.match(name, /^\.\/[a-z-]+$/);
     if (cache.has(name)) return cache.get(name).exports;
     const file = join(electronRoot, `${name.slice(2)}.ts`), module = { exports: {} }; cache.set(name, module);
-    const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+    const source = sources ? sources.get(name) : readFileSync(file, 'utf8');
+    assert.equal(typeof source, 'string', `Missing reviewed discovery test module: ${name}`);
+    const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
     vm.runInNewContext('(function(require,module,exports){' + compiled + '\n})', { Buffer, URL, AbortController, TextDecoder, Response, setTimeout, clearTimeout, process }, { filename: file })(load, module, module.exports);
     return module.exports;
   };

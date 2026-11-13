@@ -8,9 +8,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HARNESS_FILES, acceptanceMatrix, reviewedBindings, verifyHarness, verifyHarnessFiles } from './osir-artifact-acceptance-ci.mjs';
 import { bindInputs } from './osir-native-smoke.mjs';
 import { bindBaseline, validateSpec } from './osir-native-upgrade-acceptance.mjs';
-import { SHA, bytes, check, fingerprint, immutableFile, inspect, json, matches, within } from './osir-anywhere-release-common.mjs';
+import { SHA, bytes, check, digest, fingerprint, immutableFile, inspect, json, matches, within } from './osir-anywhere-release-common.mjs';
 
 export const TOOL_VERSIONS = { 'electron-builder': '26.18.1', '@electron/asar': '3.4.1', typescript: '6.0.3' };
+export const DISCOVERY_TEST_MODULES = ['desktop-updates', 'json-store', 'update-version', 'update-download', 'release-manifest'];
 export const UPGRADE_FILES = [
   '.github/workflows/osir-anywhere-upgrade-acceptance.yml',
   ...['mjs', 'runtime.mjs', 'extract.mjs', 'test.mjs', 'ci.mjs', 'ci.test.mjs', 'md'].map(suffix => `desktop-workbench/scripts/osir-native-upgrade-acceptance.${suffix}`),
@@ -36,6 +37,28 @@ async function preserve(source, destination, identity, limit = 32 * 1024 * 1024)
   const actual = await inspect(destination);
   if (identity) check(actual.sha256 === identity.sha256 && actual.size === identity.size, 'Transferred bytes changed');
   return actual;
+}
+
+// The independent harness intentionally contains no product electron/ sources.
+// Review tests consume only these byte-verified inputs from a separate immutable
+// product checkout. This remains synthetic testing, never native evidence.
+export async function discoveryTestSources(checkout, bindings) {
+  check(isAbsolute(checkout ?? ''), 'Absolute frozen discovery test checkout required');
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkout, encoding: 'utf8' }).trim();
+  check(head === bindings.sourceCommit, 'Discovery test checkout differs from reviewed product commit');
+  const source = await json(join(checkout, 'osir-source.json'));
+  check(source.schemaVersion === 1 && source.sourceSha256 === bindings.sourceSha256 && fingerprint(source.files) === bindings.sourceSha256, 'Discovery test source inventory differs from reviewed product');
+  const modules = new Map();
+  for (const name of DISCOVERY_TEST_MODULES) {
+    const path = `desktop-workbench/electron/${name}.ts`, entry = source.files.find(file => file.path === path);
+    check(entry, `Missing reviewed discovery test source: ${path}`);
+    const file = join(checkout, path); await regular(file, 32 * 1024 * 1024);
+    check(within(await realpath(checkout), await realpath(file)), 'Discovery test source escapes frozen checkout');
+    const raw = await readFile(file);
+    check(raw.length === entry.size && digest(raw) === entry.sha256, `Frozen discovery test source changed: ${path}`);
+    modules.set(`./${name}`, raw.toString('utf8'));
+  }
+  return modules;
 }
 
 export async function linkTools(checkout, tools) {
