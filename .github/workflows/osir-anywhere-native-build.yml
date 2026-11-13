@@ -1,0 +1,161 @@
+name: OSIR Anywhere reviewed native build
+
+# Candidate builds only; final native acceptance and publication are separate.
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Reviewed private snapshot commit (full 40-character SHA)
+        required: true
+        type: string
+      source_sha256:
+        description: Reviewed osir-source.json sourceSha256
+        required: true
+        type: string
+      recipe_sha256:
+        description: SHA-256 of raw reviewed recipe bytes (no sourceSha inside recipe)
+        required: true
+        type: string
+      target:
+        description: Reuse successful targets; ARM64 requires reviewed native dependencies
+        type: choice
+        default: all
+        options: [all, darwin-universal, win32-x64, win32-arm64]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osir-anywhere-native-${{ inputs.source_commit }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+env:
+  OSIR_SOURCE_COMMIT: ${{ inputs.source_commit }}
+  OSIR_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+  OSIR_RECIPE_SHA256: ${{ inputs.recipe_sha256 }}
+  YARN_ENABLE_SCRIPTS: 'false'
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      lock_sha256: ${{ steps.lock.outputs.lock_sha256 }}
+      lock_artifact_name: ${{ steps.lock.outputs.lock_artifact_name }}
+    env:
+      YARN_ENABLE_IMMUTABLE_INSTALLS: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.2
+      - name: Verify reviewed inputs and create spec outside snapshot
+        run: node desktop-workbench/scripts/osir-anywhere-ci.mjs
+      - name: Headless release contracts (not native acceptance)
+        run: node --test desktop-workbench/scripts/osir-anywhere-*.test.mjs
+      - name: Restore Yarn download cache for reviewed resolution
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/osir-yarn-downloads
+          key: osir-yarn-resolve-node22-${{ inputs.recipe_sha256 }}-${{ hashFiles('desktop-workbench/package.json', 'desktop-workbench/renderer/package.json', 'desktop-workbench/.yarnrc.yml') }}
+      - name: Resolve dependency lock exactly once
+        working-directory: desktop-workbench
+        run: |
+          corepack enable
+          corepack yarn install --mode=skip-build
+      - name: Bind and preserve raw resolved lock
+        id: lock
+        run: node desktop-workbench/scripts/osir-anywhere-ci.mjs lock
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.lock.outputs.lock_artifact_name }}
+          path: ${{ runner.temp }}/resolved-yarn.lock
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    needs: resolve
+    env:
+      OSIR_DEPENDENCY_LOCK_SHA256: ${{ needs.resolve.outputs.lock_sha256 }}
+      YARN_ENABLE_IMMUTABLE_INSTALLS: 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-universal
+            runner: macos-15
+          - target: win32-x64
+            runner: windows-2022
+          - target: win32-arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        with:
+          node-version: 22.23.2
+          architecture: ${{ matrix.target == 'win32-arm64' && 'arm64' || '' }}
+      - name: Download shared lock outside source history
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.resolve.outputs.lock_artifact_name }}
+          path: ${{ runner.temp }}/osir-resolved-lock
+      - name: Verify source, recipe and bind shared lock hash
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        run: node desktop-workbench/scripts/osir-anywhere-ci.mjs
+      - name: Restore download caches only
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/osir-yarn-downloads
+            ${{ runner.temp }}/osir-electron-downloads
+            ${{ runner.temp }}/osir-builder-downloads
+            desktop-workbench/.cache/uv
+            desktop-workbench/.cache/python
+          key: osir-downloads-${{ matrix.target }}-node22-${{ inputs.recipe_sha256 }}-${{ needs.resolve.outputs.lock_sha256 }}-${{ hashFiles('desktop-workbench/scripts/prepare-uv.mjs', 'desktop-workbench/scripts/prepare-python.mjs') }}
+      - name: Immutable install with shared lock, without scripts or secrets
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        working-directory: desktop-workbench
+        run: |
+          corepack enable
+          node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import crypto from "node:crypto"; const lock=fs.readFileSync(path.join(process.env.RUNNER_TEMP,"osir-resolved-lock/resolved-yarn.lock")); if(crypto.createHash("sha256").update(lock).digest("hex")!==process.env.OSIR_DEPENDENCY_LOCK_SHA256)throw Error("Shared lock mismatch"); fs.writeFileSync("yarn.lock",lock,{flag:"wx"});'
+          corepack yarn install --immutable --mode=skip-build
+      - name: Build final candidate (unsigned, no Apple notarization)
+        if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          OSIR_BUILD_TARGET: ${{ matrix.target }}
+        run: node desktop-workbench/scripts/osir-anywhere-build.mjs prepare "$OSIR_BUILD_SPEC" "$OSIR_BUILD_TARGET"
+      - name: Preserve final bytes, provenance, native signature and resolved lock
+        if: always() && (inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64'))
+        uses: actions/upload-artifact@v6
+        with:
+          name: osir-anywhere-${{ matrix.target }}-${{ inputs.source_commit }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/build-receipt.json
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/compiled.json
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/system-signature.json
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/source-provenance.json
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/resolved-yarn.lock
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/*.dmg
+            ${{ runner.temp }}/osir-anywhere-build/${{ matrix.target }}/*.exe
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  # Final installer smoke is owned by Meitner (scripts/osir-native-smoke.mjs).
+  # Main coordinates native/lifecycle aggregation before publisher acceptance.
