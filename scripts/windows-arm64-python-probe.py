@@ -9,6 +9,7 @@ import struct
 import subprocess
 import sys
 import sysconfig
+import time
 
 evidence = Path(os.environ["OSIR_PREFLIGHT_ROOT"]) / "evidence"
 result = {
@@ -55,7 +56,8 @@ try:
     for name in (
         "asyncer", "claude_agent_sdk", "httpx", "jsonschema", "loguru", "meshcall",
         "openai_codex", "psutil", "pydantic", "pydantic_core", "pyte", "python_socks",
-        "winpty", "websockets",
+        "winpty", "websockets", "_cffi_backend", "cryptography.hazmat.bindings._rust",
+        "win32api", "win32pipe",
     ):
         observe(name, lambda name=name: {"moduleFile": str(importlib.import_module(name).__file__)})
     observe("psutil.native", lambda: importlib.import_module("psutil").Process().memory_info()._asdict())
@@ -65,7 +67,13 @@ try:
         from winpty import PtyProcess
         process = PtyProcess.spawn('cmd.exe /d /c echo OSIR_ARM64_CONPTY')
         try:
-            text = process.read(4096)
+            text = ""
+            deadline = time.monotonic() + 10
+            while "OSIR_ARM64_CONPTY" not in text and time.monotonic() < deadline:
+                try:
+                    text += process.read(4096)
+                except EOFError:
+                    break
             assert "OSIR_ARM64_CONPTY" in text, repr(text)
             return text
         finally:
@@ -75,7 +83,7 @@ try:
     binaries = []
     for distribution in sorted(importlib.metadata.distributions(), key=lambda dist: dist.metadata["Name"].lower()):
         name = distribution.metadata["Name"]
-        result["distributions"].append({"name": name, "version": distribution.version})
+        result["distributions"].append({"name": name, "version": distribution.version, "wheelMetadata": distribution.read_text("WHEEL")})
         for file in distribution.files or []:
             if Path(file).suffix.lower() not in (".pyd", ".dll", ".exe"):
                 continue
@@ -91,7 +99,7 @@ try:
                 binaries.append((name, path, ["--version"]))
     meshcall = Path(sys.executable).parent / "meshcall.exe"
     if meshcall.exists():
-        binaries.append(("meshcall", meshcall, ["--help"]))
+        binaries.append(("meshcall", meshcall, ["version"]))
     for distribution, binary, args in binaries:
         completed = subprocess.run([str(binary), *args], capture_output=True, text=True, timeout=60)
         item = {"distribution": distribution, "binary": str(binary), "arguments": args, "exitCode": completed.returncode, "stdout": completed.stdout[-8000:], "stderr": completed.stderr[-8000:]}
@@ -101,6 +109,12 @@ try:
     for required in ("codex.exe", "claude.exe", "meshcall.exe"):
         if not any(Path(item["binary"]).name.lower() == required for item in result["cli"]):
             result["errors"].append(f"Required dependency CLI not located: {required}")
+    claude = importlib.metadata.distribution("claude-agent-sdk")
+    result["claudeSdkBundledCli"] = {
+        "installedVersion": claude.version,
+        "wheelMetadata": claude.read_text("WHEEL"),
+        "cliFiles": [str(file) for file in claude.files or [] if Path(file).name.lower() in ("claude.exe", "claude")],
+    }
 except Exception as exc:
     result["errors"].append(str(exc))
 finally:

@@ -166,6 +166,19 @@ try {
         await command('python-dependency-imports-cli', venvPython, ['-I', join(repository, 'scripts/windows-arm64-python-probe.py')], { env, timeout: 300_000 });
         return JSON.parse(await readFile(join(evidence, 'python-native-dependencies.json'), 'utf8'));
       });
+      await stage('record-claude-sdk-official-wheel-availability', async () => {
+        const metadataPath = await download('https://pypi.org/pypi/claude-agent-sdk/json', join(evidence, 'claude-agent-sdk-official-pypi.json'));
+        const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+        const native = JSON.parse(await readFile(join(evidence, 'python-native-dependencies.json'), 'utf8'));
+        const result = {
+          installed: native.claudeSdkBundledCli,
+          latestVersion: metadata.info.version,
+          latestWindowsWheels: metadata.urls.filter(({ filename }) => /win(?:32|_amd64|_arm64)/.test(filename)).map(({ filename, digests }) => ({ filename, sha256: digests.sha256 })),
+          latestWindowsArm64Wheels: metadata.urls.filter(({ filename }) => /win_arm64/.test(filename)).map(({ filename, digests }) => ({ filename, sha256: digests.sha256 })),
+        };
+        await writeFile(join(evidence, 'claude-sdk-arm64-availability.json'), JSON.stringify(result, null, 2));
+        return result;
+      });
     } else {
       await stage('identify-specific-arm64-dependency-blockers', async () => {
         const code = 'import json,tomllib,sys; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))["project"]["dependencies"]))';
