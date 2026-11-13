@@ -1,0 +1,58 @@
+name: OSIR Windows ARM64 native dependencies
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osir-windows-arm-dependencies-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-dependencies:
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout preflight inputs without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Setup exact native ARM64 Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.23.2
+          architecture: arm64
+          package-manager-cache: false
+
+      - name: Verify official runtimes and exercise native Connector dependencies
+        timeout-minutes: 35
+        env:
+          OSIR_PREFLIGHT_ROOT: ${{ runner.temp }}/osir-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/windows-arm64-preflight.mjs
+
+      - name: Upload observed results including failed dependency diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: osir-windows-arm64-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/osir-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Summarize observed evidence
+        if: always()
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP 'osir-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}/evidence/report.json'
+          if (Test-Path $report) {
+            $data = Get-Content -Raw $report | ConvertFrom-Json
+            "### Windows ARM64 dependency preflight: $($data.status)" >> $env:GITHUB_STEP_SUMMARY
+            foreach ($stage in $data.stages) { "- $($stage.name): $($stage.status)" >> $env:GITHUB_STEP_SUMMARY }
+            'Only observed process/import/CLI/PE results count. See the JSON and logs for exact versions and failures.' >> $env:GITHUB_STEP_SUMMARY
+            'No product installation, release pointer, account login or authenticated runtime session is covered.' >> $env:GITHUB_STEP_SUMMARY
+          }
