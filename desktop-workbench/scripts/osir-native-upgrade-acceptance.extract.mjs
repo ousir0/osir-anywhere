@@ -12,6 +12,13 @@ export function electronFromLock(text) {
   return versions[0];
 }
 
+export function validateElectronFramework(metadata, electronVersion) {
+  check(metadata.CFBundleIdentifier === 'com.github.Electron.framework' && metadata.CFBundlePackageType === 'FMWK', 'Original Electron framework identity mismatch');
+  // The shipped Electron framework declares CFBundleVersion only. A present
+  // marketing version must agree too; neither field may hide a wrong runtime.
+  check(metadata.CFBundleVersion === electronVersion && (metadata.CFBundleShortVersionString === undefined || metadata.CFBundleShortVersionString === electronVersion), 'Packaged Electron differs from reviewed dependency lock');
+}
+
 export async function reuseExtractedRuntime(raw, resources, root) {
   for (const name of ['dist', 'renderer/out', 'node_modules']) await copyIndependent(join(raw, name), join(root, name), raw, root);
   for (const name of ['uv', 'python']) await copyIndependent(join(resources, name), join(root, 'build', name), resources, join(root, 'build'));
@@ -41,7 +48,7 @@ export async function extractPackagedOutputs({ spec, inputs, root, output, env, 
       const plist = JSON.parse(await run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(contents, 'Info.plist')], 'extract-final-bundle'));
       check(plist.CFBundleIdentifier === 'com.osir.anywhere.desktop' && plist.CFBundleShortVersionString === FINAL_VERSION, 'Original final bundle identity/version mismatch');
       const framework = JSON.parse(await run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(contents, 'Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist')], 'extract-electron-version'));
-      check(framework.CFBundleShortVersionString === electronVersion, 'Packaged Electron differs from reviewed dependency lock');
+      validateElectronFramework(framework, electronVersion);
     } else {
       const destination = join(output, 'final-extraction-install');
       await run(spec.finalInstallerPath, ['/S', '/currentuser', `/D=${destination}`], 'extract-final-nsis', { timeout: 180000 });

@@ -286,7 +286,7 @@ export async function runAcceptance(spec, output, { adapterFactory, isolationVer
     report.baseline = { ...controlled.baseline, evidence: controlled.baseline.evidence.map(item => ({ ...item, path: `baseline-${item.path}` })) };
     report.scriptSha256 = (await fileIdentity(SELF)).sha256;
     const runtime = await import('./osir-native-upgrade-acceptance.runtime.mjs');
-    const isolation = await (isolationVerifier ?? runtime.verifyUpgradeIsolation)(spec, { output });
+    const isolation = await (isolationVerifier ?? runtime.verifyUpgradeIsolation)(spec, { output, evidence });
     report.networkPolicy = isolation.networkPolicy;
     report.publicNetworkMayBeReachable = isolation.publicNetworkMayBeReachable;
     report.networkIsolationClaimed = false;

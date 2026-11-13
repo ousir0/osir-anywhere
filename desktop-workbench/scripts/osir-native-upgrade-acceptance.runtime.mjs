@@ -17,14 +17,31 @@ const PRODUCT = 'OSIR Anywhere', APP_ID = 'com.osir.anywhere.desktop';
 const LIMIT = 2 * 1024 * 1024;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// Keep the shared live desktop/session gate. One Windows timeout may be
+// retried, but every failure survives and no failed observation is accepted.
+export async function observeUpgradeGui(env, evidence, probe = nativeGuiProvenance, platform = process.platform) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let gui;
+    try {
+      gui = await probe(env);
+    } catch (error) {
+      await evidence(`runner-gui-attempt-${attempt}.json`, bytes({ result: 'failed', failure: String(error.message), ...(error.commandResult ? { command: error.commandResult } : {}) }));
+      if (platform !== 'win32' || attempt === 2 || error.message !== 'Native command timed out') throw error;
+      continue;
+    }
+    await evidence(`runner-gui-attempt-${attempt}.json`, bytes({ result: 'passed', gui }));
+    return gui;
+  }
+}
+
 // The coordinator explicitly authorizes disposable clean native GUI runners.
 // Public network may be reachable. No network-denial/offline claim is made.
-export async function verifyUpgradeIsolation(spec, { output }) {
+export async function verifyUpgradeIsolation(spec, { output, evidence }) {
   await requireHostedRunner();
   check(`${process.platform}-${process.arch}` === spec.runner.nativeMachine, 'Clean runner native machine mismatch');
   const preflight = join(output, 'runner-preflight'); await mkdir(preflight, { mode: 0o700 });
   const env = smokeEnvironment(process.env, homedir(), preflight); await mkdir(env.TMPDIR, { mode: 0o700 });
-  const gui = await nativeGuiProvenance(env);
+  const gui = await observeUpgradeGui(env, evidence);
   return { schemaVersion: 1, kind: 'disposable-native-runner', runnerMode: 'disposable-clean-runner', disposable: true,
     networkPolicy: 'unrestricted-no-product-credentials', offline: false,
     networkIsolationClaimed: false, hostedRunner: hostedRunnerProvenance(), gui,

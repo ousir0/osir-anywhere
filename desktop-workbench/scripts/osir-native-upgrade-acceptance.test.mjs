@@ -12,13 +12,70 @@ import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 import { fileIdentity, fingerprintTree } from './osir-native-smoke.mjs';
 import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
 import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
-import { packagedDiscoveryProbe, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome } from './osir-native-upgrade-acceptance.runtime.mjs';
-import { electronFromLock, reuseExtractedRuntime } from './osir-native-upgrade-acceptance.extract.mjs';
+import { observeUpgradeGui, packagedDiscoveryProbe, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome } from './osir-native-upgrade-acceptance.runtime.mjs';
+import { electronFromLock, reuseExtractedRuntime, validateElectronFramework } from './osir-native-upgrade-acceptance.extract.mjs';
 import { collectRaw, discoveryTestSources, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
 import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
 
 const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
 const identity = data => ({ size: data.length, sha256: digest(data) });
+
+test('Windows GUI preflight retries one timeout and preserves its raw failure before a live success', async () => {
+  const env = { synthetic: true }, records = [], gui = { interactiveDesktop: true, sessionId: 1 };
+  const failure = Object.assign(new Error('Native command timed out'), { commandResult: { executable: 'powershell.exe', args: ['synthetic'], code: null, signal: 'SIGTERM', stdout: '', stderr: 'cold probe' } });
+  let calls = 0;
+  const probe = async actual => { assert.equal(actual, env); if (++calls === 1) throw failure; return gui; };
+  assert.equal(await observeUpgradeGui(env, async (name, raw) => records.push({ name, ...JSON.parse(raw) }), probe, 'win32'), gui);
+  assert.equal(calls, 2); assert.equal(records.length, 2);
+  assert.equal(records[0].result, 'failed'); assert.deepEqual(records[0].command, failure.commandResult);
+  assert.equal(records[1].result, 'passed'); assert.deepEqual(records[1].gui, gui);
+});
+
+test('GUI preflight never retries a rejection or accepts repeated timeout, and leaves Mac behavior unchanged', async () => {
+  for (const [platform, message, expectedCalls] of [['win32', 'No native Windows GUI', 1], ['win32', 'Native command timed out', 2], ['darwin', 'Native command timed out', 1]]) {
+    let calls = 0; const records = [], failure = new Error(message);
+    await assert.rejects(observeUpgradeGui({}, async (_name, raw) => records.push(JSON.parse(raw)), async () => { calls++; throw failure; }, platform), error => error === failure);
+    assert.equal(calls, expectedCalls); assert.equal(records.length, expectedCalls);
+    assert.ok(records.every(record => record.result === 'failed'));
+  }
+});
+
+test('a repeated GUI timeout preserves raw evidence and never attempts either installer', async t => {
+  const f = await fixture(t), output = join(f.root, 'failed-gui');
+  let createdAdapter = false;
+  const report = await runAcceptance(f.spec, output, {
+    adapterFactory: () => { createdAdapter = true; throw new Error('Adapter must not be reached'); },
+    isolationVerifier: async (_spec, { evidence }) => observeUpgradeGui({}, evidence, async () => {
+      throw Object.assign(new Error('Native command timed out'), { commandResult: { executable: 'powershell.exe', args: ['synthetic'], code: null, signal: 'SIGTERM', stdout: '', stderr: 'synthetic timeout' } });
+    }, 'win32'),
+  });
+  assert.equal(report.result, 'failed'); assert.equal(createdAdapter, false);
+  assert.deepEqual(report.execution, { baselineInstallAttempted: false, finalInstallAttempted: false });
+  assert.deepEqual(report.checks, { upgradeDataPreserved: false, updateDiscovery: false });
+  assert.equal(report.failure, 'Native command timed out');
+  const attempts = report.evidence.filter(item => item.path.startsWith('runner-gui-attempt-'));
+  assert.equal(attempts.length, 2);
+  for (const item of attempts) {
+    assert.deepEqual(await fileIdentity(join(output, item.path)), { size: item.size, sha256: item.sha256 });
+    const record = JSON.parse(await readFile(join(output, item.path), 'utf8'));
+    assert.equal(record.result, 'failed'); assert.equal(record.command.executable, 'powershell.exe');
+  }
+});
+
+test('shipped Electron framework uses its exact build version without requiring an absent marketing version', () => {
+  const framework = { CFBundleIdentifier: 'com.github.Electron.framework', CFBundlePackageType: 'FMWK', CFBundleVersion: '39.8.10' };
+  const version = electronFromLock('  resolution: "electron@npm:39.8.10"\n');
+  assert.doesNotThrow(() => validateElectronFramework(framework, version));
+  assert.doesNotThrow(() => validateElectronFramework({ ...framework, CFBundleShortVersionString: version }, version));
+  for (const metadata of [
+    { ...framework, CFBundleVersion: undefined },
+    { ...framework, CFBundleVersion: '39.8.11', CFBundleShortVersionString: version },
+    { ...framework, CFBundleShortVersionString: '39.8.11' },
+    { ...framework, CFBundleShortVersionString: null },
+  ]) assert.throws(() => validateElectronFramework(metadata, version), /differs from reviewed dependency lock/);
+  assert.throws(() => validateElectronFramework({ ...framework, CFBundleIdentifier: 'other.framework' }, version), /identity mismatch/);
+  assert.throws(() => validateElectronFramework({ ...framework, CFBundlePackageType: 'APPL' }, version), /identity mismatch/);
+});
 
 test('upgrade waits past Loading for the shared welcome gate before allowing a screenshot', async () => {
   const ready = { ready: true, branded: true, action: { text: 'Sign in to OSIR Anywhere', enabled: true, visible: true } };
