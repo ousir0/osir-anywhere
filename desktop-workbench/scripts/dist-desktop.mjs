@@ -252,7 +252,7 @@ async function main() {
   const builderEnvironment = { ...credentials.environment };
   const buildConfig = JSON.parse(readFileSync(join(PROJECT_ROOT, "package.json"), "utf8")).build;
   const runtimePackagePaths = desktopRuntimePackagePaths(PROJECT_ROOT);
-  const packageConfig = createDesktopPackageConfig(buildConfig, { platform, arch: targetArch, runtimePackagePaths });
+  const packageConfig = createDesktopPackageConfig(buildConfig, { platform, arch: targetArch, runtimePackagePaths, unsignedMac: platform === "mac" && !signed });
   log(`Packaging ${runtimePackagePaths.length} installed runtime dependency directories; renderer build tools are excluded.`);
   const configDirectory = mkdtempSync(join(tmpdir(), "osir-anywhere-builder-"));
   const configPath = join(configDirectory, "electron-builder.json");

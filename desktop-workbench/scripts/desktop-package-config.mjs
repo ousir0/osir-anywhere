@@ -1,6 +1,13 @@
-export function createDesktopPackageConfig(buildConfig, { platform, arch, runtimePackagePaths }) {
+export function createDesktopPackageConfig(buildConfig, { platform, arch, runtimePackagePaths, unsignedMac = false }) {
   const config = structuredClone(buildConfig);
   const files = config.files ?? [];
+
+  if (platform === "mac" && unsignedMac) {
+    // Universal merging and app metadata edits invalidate Electron's original
+    // signature. Seal the completed app, including nested code, before DMG
+    // creation. Ad-hoc is still published as unsigned, never Developer ID.
+    config.mac = { ...config.mac, identity: "-", notarize: false };
+  }
 
   if (runtimePackagePaths) {
     // The static renderer already contains browser dependencies. Yarn workspace

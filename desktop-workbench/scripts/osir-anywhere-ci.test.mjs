@@ -81,3 +81,18 @@ test('runner environment paths are generated from actual native temp without inv
   assert.equal(runnerEnvironment(tmpdir()).OSIR_BUILD_SPEC, join(tmpdir(), 'build-spec.json'));
   assert.throws(() => runnerEnvironment('/tmp/evil\nINJECT=true'), /absolute/);
 });
+
+test('reviewed input bytes survive a runner with autocrlf enabled', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'osir-ci-checkout-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = args => execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  git(['init', '-q']);
+  git(['config', 'core.autocrlf', 'true']);
+  await writeFile(join(root, '.gitattributes'), await readFile(new URL('../../.gitattributes', import.meta.url)));
+  const input = Buffer.from('name: reviewed build\non:\n  workflow_dispatch:\n');
+  await writeFile(join(root, 'candidate.yml'), input);
+  git(['add', '.']);
+  await rm(join(root, 'candidate.yml'));
+  git(['checkout-index', '-f', '--', 'candidate.yml']);
+  assert.deepEqual(await readFile(join(root, 'candidate.yml')), input);
+});

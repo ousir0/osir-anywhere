@@ -19,6 +19,20 @@ const nativePackageFiles = [
   "lightningcss-darwin-{arch}/lightningcss.node",
 ];
 
+test("unsigned Mac candidates explicitly seal edited Electron bundles without claiming notarization", () => {
+  const before = structuredClone(packageJson.build);
+  for (const arch of ["universal", "arm64", "x64"]) {
+    const config = createDesktopPackageConfig(packageJson.build, { platform: "mac", arch, unsignedMac: true });
+    assert.equal(config.mac.identity, "-");
+    assert.equal(config.mac.notarize, false);
+    assert.equal(config.mac.entitlements, packageJson.build.mac.entitlements);
+    assert.equal(config.mac.hardenedRuntime, packageJson.build.mac.hardenedRuntime);
+  }
+  assert.deepEqual(packageJson.build, before);
+  assert.deepEqual(createDesktopPackageConfig(packageJson.build, { platform: "mac", arch: "universal" }).mac, before.mac);
+  assert.deepEqual(createDesktopPackageConfig(packageJson.build, { platform: "win", arch: "x64", unsignedMac: true }).mac, before.mac);
+});
+
 function matches(config, relativePath) {
   const nodeModulePatterns = ["**/*", ...config.files.filter((pattern) => pattern.startsWith("!") || pattern.startsWith("node_modules/"))];
   const patterns = nodeModulePatterns.map((pattern) => new minimatch.Minimatch(pattern, { dot: true }));
