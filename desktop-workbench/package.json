@@ -1,0 +1,153 @@
+{
+  "name": "osir-anywhere-desktop-workbench",
+  "productName": "OSIR Anywhere",
+  "private": true,
+  "version": "2.2.0",
+  "description": "Electron shell for the OSIR Anywhere workbench",
+  "packageManager": "yarn@4.6.0",
+  "workspaces": [
+    "renderer"
+  ],
+  "main": "dist/electron/main.js",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "build:info": "node scripts/write-build-info.mjs",
+    "build:main": "yarn build:info && tsc -p tsconfig.json && node scripts/write-build-config.mjs",
+    "renderer:typecheck": "yarn workspace osir-anywhere-desktop-renderer typecheck",
+    "typecheck": "yarn build:info && tsc -p tsconfig.json --noEmit",
+    "test:main": "yarn build:main && node --test dist/electron/*.test.js dist/electron/backend/*.test.js scripts/desktop-package-config.test.mjs scripts/desktop-build-config.test.mjs",
+    "dev": "yarn build:main && node scripts/dev.mjs",
+    "start": "yarn ensure:uv && yarn build:main && electron .",
+    "build:web": "node scripts/build-web.mjs",
+    "build": "yarn build:main && yarn build:web",
+    "ensure:uv": "node scripts/ensure-uv.mjs",
+    "bundle:uv": "node scripts/prepare-uv.mjs",
+    "bundle:python": "node scripts/prepare-python.mjs",
+    "pack": "node scripts/dist-desktop.mjs --dir",
+    "dist": "node scripts/dist-desktop.mjs",
+    "dist:mac": "node scripts/dist-desktop.mjs mac",
+    "dist:win": "node scripts/dist-desktop.mjs win",
+    "measure:poc": "node scripts/measure-desktop-poc.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "@types/ws": "8.18.1",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "proxy-agent": "^8.0.2",
+    "typescript": "^6.0.3"
+  },
+  "build": {
+    "appId": "com.osir.anywhere.desktop",
+    "productName": "OSIR Anywhere",
+    "files": [
+      "dist/electron/**",
+      "dist/shared/**",
+      "dist/config.json",
+      "dist/build-info.json",
+      "!dist/electron/development-login.js",
+      "!dist/electron/*.test.js",
+      "!dist/electron/backend/*.test.js",
+      "!node_modules/osir-anywhere-desktop-renderer/**",
+      "!node_modules/meshcall-router-*/**",
+      "renderer/out/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/release-public.pub",
+        "to": "build/release-public.pub"
+      },
+      {
+        "from": "../connector",
+        "to": "connector",
+        "filter": [
+          "pyproject.toml",
+          "README.md",
+          "connector/**",
+          "!**/__pycache__/**",
+          "!**/_reference/**",
+          "!**/_deprecated/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../logo",
+        "to": "logo",
+        "filter": [
+          "*.png"
+        ]
+      },
+      {
+        "from": "build/icon-mac-source.png",
+        "to": "build/icon-mac-source.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "build/icon.ico"
+      },
+      {
+        "from": "build/uv",
+        "to": "uv",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "protocols": [
+      {
+        "name": "OSIR Anywhere OAuth",
+        "schemes": [
+          "osir-anywhere"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
+      "gatekeeperAssess": false,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "x64ArchFiles": "{Contents/Resources/uv/darwin-*/uv,Contents/Resources/python/darwin-*/**,Contents/Resources/app.asar.unpacked/node_modules/{@img/sharp-darwin-*,@img/sharp-libvips-darwin-*,@next/swc-darwin-*,@swc/core-darwin-*,@parcel/watcher-darwin-*,@tailwindcss/oxide-darwin-*,lightningcss-darwin-*}/**}",
+      "signIgnore": [
+        "\\.(?:pak|dat|wasm|pyc|pickle|whl)$"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon-mac-source.png",
+      "target": "AppImage"
+    }
+  },
+  "dependencies": {
+    "meshcall": "0.3.0"
+  }
+}

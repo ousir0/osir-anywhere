@@ -1,0 +1,591 @@
+# Desktop Workbench
+
+OSIR Anywhere Desktop combines the web workbench and a locally managed
+Connector in one Electron application.
+
+The Connector supervisor, Desktop startup logs, settings and local binding live in an
+independent backend process (`child_process.fork` with `ELECTRON_RUN_AS_NODE`).
+It never touches the window, so a blocked or crashed backend cannot freeze the
+user interface. The backend serves a loopback HTTP + SSE API; Electron Main
+re-exposes it under `/desktop-api` on the app origin, so the renderer keeps
+talking to one same-origin endpoint and never sees the port or the per-launch
+token. Native shell concerns — window, tray, updates, notifications, OAuth and
+file dialogs — stay in Main over IPC.
+
+```text
+Renderer -> /desktop-api (same origin) -> Electron Main -> loopback HTTP+SSE -> Desktop backend -> anywhere-cli rpc -> Server
+Renderer -> narrow preload IPC --------------------------------------------------> Electron Main (window, updates, OAuth, dialogs)
+```
+
+The backend reports ready as soon as its loopback server is listening. Connector
+ownership, the login-shell environment snapshot and installation bookkeeping run
+afterwards, so none of them delay the window. Connector log lines are coalesced
+into batches before they reach the renderer, which keeps one chatty Connector
+from causing a render per line.
+
+On Windows, closing the window hides it to the system tray and keeps the local
+Connector running. Click the tray icon or choose **打开 OSIR Anywhere** to
+reopen the window. Choose **退出** from the tray menu to confirm exit and stop
+the local Connector; cancelling keeps the app running.
+
+## Add projects by dropping folders
+
+Drop one local folder anywhere over the Desktop sidebar to add it as a project
+on this computer's online local Connector. The name comes from the folder name;
+automatically discovered projects keep their existing names when added manually.
+A successful drop switches to the project list and expands it.
+
+An already-added folder displays an informational message without creating a
+second project. Ordinary files and unavailable paths display a folder-required
+message. Dropping multiple items (including a mixture of files and folders)
+displays “Drop one folder at a time” and adds none of them. The drop cue remains
+centered in the sidebar while its project list scrolls. This native drop action
+is unavailable in a browser, where local filesystem paths cannot be resolved.
+The cue appears only when drag metadata confirms a directory. If the OS hides
+that information until drop, the sidebar stays unobstructed and still accepts
+the drop for native directory validation. Cancelling a drag, leaving the window,
+or dropping elsewhere clears the cue; an idle timeout also clears it if an
+external drag ends without sending a cancellation event to the app.
+
+## Run
+
+From the repository root, the local Desktop launcher starts Docker-backed
+PostgreSQL and Redis, the Server on fixed port `8000`, the Web app on fixed port
+`5174` (the Anywhere Web client, separate from OSIR identity), and Desktop on fixed port `5184`.
+It releases existing listeners on those three application ports, always points
+Desktop at the local Server, and stays in the foreground like `./local-up.sh`,
+streaming prefixed Server, Web, and Desktop logs (also written to
+`.local-dev/logs/`). Press Ctrl-C to stop everything it started; `down` stops a
+launcher still running in another terminal:
+
+```bash
+./desktop-local-up.sh
+./desktop-local-up.sh down
+```
+
+Use `./desktop-local-up.sh --skip-install` to reuse existing dependencies.
+
+To run Desktop by itself:
+
+```bash
+cd desktop-workbench
+yarn install
+yarn dev
+```
+
+`yarn dev` starts the bundled `renderer` Next app on the first available local port from `5184`, waits for it, then opens Electron.
+By default, the embedded app targets local API `http://127.0.0.1:8000` and Web `http://127.0.0.1:5174`.
+The desktop shell uses the `/api/v2` API namespace by default.
+
+## Login and server configuration
+
+The login page offers **OSIR Anywhere Cloud** and an expandable self-hosted
+server form. Both check `GET /api/v2/health` and require `status: "ok"` before
+opening sign-in. HTTP errors, invalid responses, and a 10-second timeout stay on
+the login page so the address can be corrected and retried.
+
+`config.json` keeps Anywhere's API/Web addresses separate from OSIR identity.
+`OSIR_ANYWHERE_API_ORIGIN` and `OSIR_ANYWHERE_OAUTH_WEB_ORIGIN` configure the
+Anywhere service and its public Web address at build time. They do not configure
+OSIR browser authorization. The identity origins are independently configurable
+at build time or in Main's environment:
+
+- `OSIR_IDENTITY_API_ORIGIN`: OSIR identity API origin (default `https://osirclaw.com`).
+- `OSIR_IDENTITY_WEB_ORIGIN`: OSIR browser authorization origin (same default).
+- `OSIR_IDENTITY_ALLOW_LOOPBACK_HTTP=1`: explicit local development opt-in for
+  loopback HTTP identity and Anywhere service origins. Packaged builds always
+  reject HTTP for sign-in; remote HTTP, credential URLs and origin paths are rejected.
+
+Both development and packaged Desktop use the **system browser**. Each attempt
+binds a new `127.0.0.1:0` listener and opens the OSIR Web origin's
+`/auth/desktop/authorize` with `client_id=osir-anywhere-desktop`,
+`scope=identity:read`, random state, and an S256 PKCE challenge. The exact callback
+is `http://127.0.0.1:<random-port>/osir/desktop/callback`. Main checks GET, Host,
+exact path, state and unique callback fields; malformed callbacks cannot consume
+a valid attempt. The `osir-anywhere` scheme remains for onboarding and accepts
+**no OAuth codes**, including secondary-instance/open-url events.
+
+Main then performs three JSON exchanges:
+
+1. OSIR `/api/v1/auth/desktop/token`: code, original verifier and exact redirect URI
+   produce temporary OSIR tokens (`code/message/data` envelope).
+2. OSIR `/api/v1/auth/desktop/anywhere/assertion`: the OSIR access token produces
+   a 60-second assertion for `osir-anywhere-server`.
+3. Selected Anywhere `/api/v2/auth/osir/exchange`: only `{assertion}` is sent;
+   the response must be `{accessToken, tokenType:"Bearer", expiresIn:300}`.
+
+OSIR tokens stay briefly in Main's memory. Every success/failure path with an
+issued refresh token makes a bounded best-effort JSON request to OSIR
+`/api/v1/auth/logout` to revoke the temporary grant, even after cancellation.
+Cleanup failures never print token values. Main returns only the 300-second
+Anywhere access token through the existing renderer result API. Each network
+operation has a 15-second deadline, responses are bounded to 64 KiB, and redirects
+are refused. Failure or timeout needs a new browser authorization; long-lived
+sessions, automatic renewal and guaranteed global session revocation are not delivered.
+
+A valid callback closes the listener; timeout, cancellation, retry, browser-open
+failure and app shutdown also close it. The preload exposes `auth.cancelOAuth()`;
+AuthContext invokes it on owning-window unmount, while preview windows do not
+cancel another window's login. There is currently **no explicit cancel button**.
+Retrying sign-in cancels the previous attempt and suppresses stale results.
+After successful exchange, the selected Anywhere server is saved in
+`desktop-server.json`; API requests, downloads and WebSockets follow that server.
+For separate Anywhere API/Web deployments, `WORKBENCH_API_ORIGIN` and
+`WORKBENCH_OAUTH_WEB_ORIGIN` remain the service address pair, independent of OSIR identity.
+
+The OSIR Anywhere identity remains isolated from the upstream app: bundle ID
+`com.osir.anywhere.desktop`, onboarding scheme `osir-anywhere`, renderer scheme
+`osir-anywhere-workbench`, and Electron data directory `OSIR Anywhere`.
+`.invalid` updater URLs and the existing OAuth verification release gate remain
+unchanged. Headless checks do not establish real system-browser acceptance or
+production readiness; no package has been built or released for this change.
+
+## OSIR identity implementation verification (2026-11-13)
+
+Desktop dependencies were restored using cached Yarn 4.6.0 with `install --mode=skip-build`
+(the initially missing local project marker was an ignored `yarn.lock`). This installed
+JavaScript packages without downloading/starting Electron or building an installer.
+Checks used the local Node v26.13.0; the package currently declares Node 22, so these
+results do not establish compatibility with the release Node/Electron runtime.
+
+From `desktop-workbench`, the executed Yarn CLI was
+`node /Users/ouwei/.cache/node/corepack/v1/yarn/4.6.0/yarn.js`:
+
+- `test:main`: 156 tests, 155 passed, 0 failed, 1 skipped (Electron binary absent).
+  Includes real loopback HTTP and mocked OSIR/Anywhere services, PKCE/state,
+  invalid/duplicate fields, Host/path/method, denial, timeout/cancel/retry/shutdown,
+  response validation, temporary-grant logout and secret-safe errors.
+- `typecheck`: Main TypeScript check.
+- `renderer:typecheck`: renderer TypeScript check.
+- From `renderer`: `node --test test/desktop-oauth-cleanup.test.mjs test/desktop-preview-auth.test.mjs test/admin-auth-routing.test.mjs`
+  — 6 passed, 0 failed. Includes owning-context unmount cancellation and preview isolation.
+
+Changed files for this OAuth work (previous brand POC remains):
+
+- `electron/desktop-oauth.ts`, `electron/main.ts`, `electron/preload.ts`,
+  `electron/development-login.ts`.
+- `config.json`, `scripts/write-build-config.mjs`, `scripts/dist-desktop.mjs`
+  (release-gate wording only; the required verification flag remains unchanged).
+- `electron/desktop-oauth.test.ts`, `electron/development-login.test.ts`,
+  `electron/desktop-onboarding.test.ts`, `electron/main-lifecycle.test.ts`.
+- `electron/desktop-server.test.ts`, `electron/connector-python.test.ts`
+  (corrected two stale assertions from the preceding local-brand/packaging POC).
+- `renderer/src/features/desktop/bridge.ts`,
+  `renderer/src/components/auth/auth-context.tsx`,
+  `renderer/test/desktop-oauth-cleanup.test.mjs`, and this README.
+
+Not exercised: launching Electron and the actual system browser, real consent,
+Electron `net.fetch` behavior, macOS/Windows integration and a live Desktop-to-Go-to-Python
+login. Server-side signature/claim/replay/database validation belongs to the separate
+Server/API checks, not these Desktop service mocks. There is no user cancel button,
+long-lived session, automatic renewal, production package, release, or changed release gate.
+
+## Renderer startup
+
+To point Electron at an already running web app:
+
+```bash
+cd desktop-workbench
+WORKBENCH_WEB_URL=http://127.0.0.1:5184 yarn start
+```
+
+To run against a static export:
+
+```bash
+cd desktop-workbench
+yarn build:web
+yarn start
+```
+
+To use a different Anywhere backend with the default `/api/v2` namespace, provide its
+matching public Web origin. OSIR browser authorization still uses the separate identity origins. Local development
+defaults an API on port `8000` to the Web app on port `5174`:
+
+```bash
+cd desktop-workbench
+WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_OAUTH_WEB_ORIGIN=http://127.0.0.1:5174 yarn dev
+```
+
+To use a backend with root API paths, explicitly provide an empty namespace:
+
+```bash
+cd desktop-workbench
+WORKBENCH_API_ORIGIN=http://127.0.0.1:8000 WORKBENCH_API_NAMESPACE= yarn dev
+```
+
+Development runs the repo-level `../connector` project with the same `uv` the
+packaged app ships, so a dev launch never depends on the developer's PATH.
+`yarn dev` and `yarn start` download that uv into
+`build/uv/<platform>-<arch>/uv[.exe]` on first use (once, then cached under
+`.cache/uv`); `yarn ensure:uv` does the same without starting the app.
+
+`uv` resolution order is the saved `uvPath` setting, then the bundled
+`build/uv/<platform>-<arch>/uv[.exe]` (packaged builds read the same directory
+from `resources/uv`), then `uv` on PATH. `yarn bundle:uv` re-bundles explicitly
+after changing `UV_BUNDLE_VERSION` and also fetches the third-party license
+notices that packaging ships. Override the connector source or launcher when
+needed:
+
+```bash
+WORKBENCH_CONNECTOR_DIR=/absolute/path/to/connector yarn dev
+WORKBENCH_CONNECTOR_CLI=/absolute/path/to/anywhere-cli yarn dev
+WORKBENCH_UV_BUNDLE_DIR=/absolute/path/to/uv-bundle yarn dev
+WORKBENCH_PYTHON_BUNDLE_DIR=/absolute/path/to/python-bundle yarn dev
+```
+
+The Python interpreter is resolved as the saved `pythonPath` setting, then the
+bundled CPython at `build/python/<platform>-<arch>/` (`python.exe` on Windows,
+`bin/python3` elsewhere; packaged builds read `resources/python`). The result
+is passed to `uv run --python`, so uv neither searches for nor downloads an
+interpreter. Development does not download the bundle automatically: without
+`yarn bundle:python` (or a previous `yarn pack`), uv picks an interpreter
+itself and may download one. Once the bundle exists, development uses it too,
+and uv rebuilds the repo's `connector/.venv` on it once.
+
+The first launch after that also runs `uv sync`, which downloads every
+Connector dependency (and the interpreter, without a bundled one). The window
+shows a preparing screen while the ownership probe waits for it; that probe
+alone allows up to 15 minutes, while every later RPC keeps its 30-second
+deadline. The same applies when the existing environment was created by another
+interpreter, such as the Python uv downloaded before Desktop bundled one: uv
+replaces that environment, and when an earlier sync failed before installing
+the Connector (the environment has `pyvenv.cfg` but no `anywhere-cli`). The
+saved `uvPypiIndexUrl` mirror is uv's first index (`UV_INDEX`) and official PyPI
+the fallback (`UV_DEFAULT_INDEX`, `UV_INDEX_URL`): uv takes each package from
+the first index that has it, so a mirror that filters large wheels (TUNA, USTC
+and BFSU carry no `openai-codex`) still installs. `PIP_INDEX_URL` follows the
+mirror. The saved `uvPythonInstallMirror` sets `UV_PYTHON_INSTALL_MIRROR` for
+the Python interpreter download (GitHub python-build-standalone when empty); it
+only matters without a bundled or saved interpreter, and Settings hides it
+otherwise. `UV_HTTP_TIMEOUT` defaults to 60 seconds.
+
+When building the environment fails, or uv itself reports the failure on a
+normal launch (`error:`, `×` or `Caused by:` lines), the ownership gate offers
+recovery in place of a bare recheck, because Settings is out of reach until the
+Connector answers: the PyPI and Python mirror choices, saved at once, and
+**Clear cache and retry**. Clearing stops the RPC process and deletes the
+project environment (only a directory holding `pyvenv.cfg`) and, when packaged,
+`uv-cache` and the `connector-source` copy with its `uv.lock`; credentials and
+settings stay. A development launch keeps the developer's uv cache.
+
+Do not start a second Connector with the same Desktop config while the app is
+running. Standalone CLI devices remain supported and should use their own
+config.
+
+## Checks
+
+```bash
+yarn typecheck
+yarn test:main
+yarn renderer:typecheck
+yarn workspace osir-anywhere-desktop-renderer test
+yarn workspace osir-anywhere-desktop-renderer protocol:check
+```
+
+`test:main` covers Desktop provisioning, account isolation, local disconnect,
+local-versus-remote reconnect behavior, quit handling, API routing, and credential
+redaction in logs. Renderer tests cover pairing, project resolution and ordering,
+preferences, clipboard fallbacks, and terminal inventory/restore behavior. These
+checks run headlessly without starting Electron or a development server.
+
+## Packaging
+
+The release build bundles the Connector source (`pyproject.toml`, `README.md` and
+the `connector/` package only, like the DSH plugin; no `uv.lock`, tests or caches),
+a platform-specific `uv`, and a platform-specific CPython. Dependencies are
+installed on first run; Python is never downloaded.
+The packaged app never runs `uv` inside its own bundle: it first mirrors the
+bundled source to `userData/connector-source/<content-hash>/` (as the DSH plugin
+does), so `uv.lock` is written there and the signed bundle stays untouched:
+
+```bash
+yarn dist:mac               # universal macOS DMG (Apple Silicon + Intel)
+yarn dist:mac --universal   # one DMG for Apple Silicon and Intel
+yarn dist:win               # Windows NSIS installer (x64)
+yarn pack                   # unpacked Electron application
+yarn dist                   # host-platform release (universal on macOS)
+```
+
+For a non-signing, single-architecture size POC, use a new empty temporary
+directory. The `--dir` target produces an unpacked app without a DMG/installer;
+`measure:poc` reports renderer file totals and the largest assets without
+changing dependencies or deleting files:
+
+```bash
+cd desktop-workbench
+output="$(mktemp -d /tmp/osir-anywhere-poc.XXXXXX)"
+OSIR_ANYWHERE_POC_OUTPUT_DIR="$output" yarn dist:mac --arm64 --dir
+yarn measure:poc renderer/out
+yarn measure:poc "$output"
+du -sh "$output"/*
+```
+
+Production packaging also requires `OSIR_ANYWHERE_API_ORIGIN`,
+`OSIR_ANYWHERE_OAUTH_WEB_ORIGIN`, `OSIR_ANYWHERE_MAC_UPDATE_URL`,
+`OSIR_ANYWHERE_WIN_UPDATE_URL`, and `OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED=1`.
+The build embeds these endpoints in its generated config and rejects missing,
+non-HTTPS, `.invalid`, or upstream Agents Anywhere URLs.
+
+Desktop now defaults to `https://anywhere.osirclaw.com`; an independent server
+remains selectable at sign-in. Local development must explicitly select its
+loopback endpoints with `OSIR_ANYWHERE_API_ORIGIN` and
+`OSIR_ANYWHERE_OAUTH_WEB_ORIGIN`. Packaging with `--skip-build` checks that the
+compiled connection settings match the source and current build environment;
+a stale local build must be rebuilt before it can be packaged.
+
+The POC output override refuses a non-empty directory. Renderer dependencies are
+currently included only when referenced by the static Next export; do not remove
+package dependencies based on install-folder size alone. Compare these reports,
+then use a traced build before proposing dependency removal.
+
+The checkout currently has no root `LICENSE` or `NOTICE` file, and the Electron
+packaging allowlist does not add one. Verify the upstream license and required
+attribution files, then include them in the distributable before any external
+release. This POC does not change or waive upstream attribution obligations.
+
+`dist`, `dist:mac` and `dist:win` read the signing environment, run the `uv` and
+Python bundles and the app build with those secrets stripped, and hand them to electron-builder
+only. The signing material is therefore never visible to a build or test
+subprocess. Add `--arm64`, `--x64` or `--universal` (macOS) to select the
+architecture, or `--dir` for an unpacked build. `dist:mac` must run on macOS and
+`dist:win` on Windows.
+
+| Environment | Effect |
+| --- | --- |
+| `MAC_CERT_P12_BASE64` + `MACOS_SIGN_IDENTITY` + `CSC_KEY_PASSWORD` | macOS signing from a Base64 PKCS#12, mapped to `CSC_LINK`/`CSC_NAME` |
+| `CSC_LINK` + `CSC_KEY_PASSWORD` (`CSC_NAME` optional) | Signing from a certificate file or URL |
+| `CSC_NAME` | Select a Keychain identity; without it auto-discovery picks one |
+| `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` | Notarize through notarytool |
+| `APPLE_API_KEY` + `APPLE_API_KEY_ID` + `APPLE_API_ISSUER` | Notarize through an App Store Connect API key |
+| `APPLE_KEYCHAIN_PROFILE` (`APPLE_KEYCHAIN` optional) | Notarize through a stored keychain profile |
+| `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD`, or `WIN_CERT_P12_BASE64` + `WIN_CSC_KEY_PASSWORD` | Authenticode signing |
+| `CSC_IDENTITY_AUTO_DISCOVERY=false` | Force an unsigned build |
+
+A credential group is all-or-nothing: a half-configured release fails before
+anything is packaged. With no credentials the artifact is built unsigned and the
+script says which step was skipped. After a signed macOS build the script runs
+`codesign --verify` (and `xcrun stapler validate` when notarized).
+
+Set `UV_BUNDLE_TARGETS=all` or a comma-separated target list for multi-platform
+artifact preparation; `dist:mac --universal` prepares both macOS `uv` builds
+automatically. Packaged builds keep the Connector virtual environment, uv cache,
+config, binding, and logs under Electron `userData`; signed resources are never
+modified at runtime. `bundle:uv` verifies the upstream archive checksum before
+copying it into `build/uv`.
+
+`bundle:python` places a python-build-standalone CPython (`install_only_stripped`,
+version pinned in `scripts/prepare-python.mjs`) under `build/python/<platform>-<arch>/`,
+verified against the release's `SHA256SUMS` and cached under `.cache/python`.
+It removes what the Connector never loads (Tk/Tcl, IDLE, turtle demos, and the
+interpreter's own pip) and ships CPython's license under `THIRD_PARTY_LICENSES`.
+`PYTHON_BUNDLE_TARGETS` selects targets like `UV_BUNDLE_TARGETS`, and
+`dist`/`dist:mac`/`dist:win` prepare the same targets as `uv`. macOS and Linux
+interpreters contain symlinks, so prepare them on macOS or Linux.
+`PYTHON_BUNDLE_VERSION` and `PYTHON_BUNDLE_RELEASE` select another build, and
+`PYTHON_BUNDLE_MIRROR` downloads from a mirror with the same release layout, e.g.
+`https://registry.npmmirror.com/-/binary/python-build-standalone`. The bundle
+adds roughly 40 MB per architecture before installer compression; the universal
+macOS app carries both architectures.
+
+## Desktop updates
+
+After authentication finishes and the workbench opens, Main checks the saved
+server's `/api/v2/health`. The authenticated session must match the saved server;
+login screens, missing server records, and default configuration never trigger
+an update check. Signing out cancels pending work and clears the update dialog.
+The server's `version` is compared numerically with the Server version recorded
+at build time, not with `app.getVersion()`. `yarn build:main` (and therefore
+`yarn dev`, `yarn build` and `yarn dist:*`) runs `scripts/write-build-info.mjs`,
+which copies `server/pyproject.toml`'s version into the generated
+`build-info.json`. A live Server newer than that baseline means a newer Desktop
+build exists; Desktop and Server PATCH versions may otherwise differ (see
+[versioning](../docs/versioning.md)). No dedicated release API is used.
+
+A Desktop built against an older Server opens an update dialog with **Ignore this version** and
+**Update now**. Outside clicks and Escape do not dismiss it; there is no close
+icon. Ignoring persists the exact server version in
+`<Electron userData>/updates/state.json`, scoped to the server. A newer server
+version prompts again. The download icon beside the account avatar remains
+visible whenever the Server is ahead of the build baseline, including after ignoring a version.
+
+`updates.downloadUrls` in `config.json` maps `process.platform` to the fixed
+HTTPS installer address. The development defaults use `.invalid` placeholders,
+so Linux and unconfigured builds report that downloads are unavailable. Downloads
+stream into `<Electron userData>/updates/downloads`
+with progress, remove incomplete files on failure/quit, and open the completed
+installer with the OS. Installing the new app remains an installer operation.
+
+## Shared local machine record
+
+On every launch, including `yarn dev`, Main validates its actual installation
+and publishes only the `desktop` field in
+`<OS user home>/.agents-anywhere/connector-runtime.json`. Unchanged installation
+metadata is not rewritten. Development records contain the Electron executable,
+project path and launch arguments; packaged records contain the installed app
+and executable paths. The DSH plugin reads this metadata without modifying it.
+
+Python Connector alone maintains the ordered `connectorIds` history and runtime
+ownership. Every accepted start, including CLI and reconnection, appends a missing
+ID once. Desktop writes installation metadata under the same short file transaction
+as Python, preserving IDs, runtime ownership and unknown fields. Hosts read legacy
+records without migrating them; Python performs the migration on a successful write.
+When the OS refuses the transaction's loopback port and nobody listens on it (for
+example a Windows excluded port range), both writers log a warning and write
+without the lease instead of failing startup; see the shared record contract.
+
+Desktop and the DSH plugin match local IDs against the signed-in user's server
+device list. First-login provisioning and pairing after a deleted device reuse the
+first matching ID in local order and rotate its token. An empty intersection creates
+a device; list or token-rotation failures stop provisioning for retry. Private
+bindings and credentials are retained when Python rejects startup, so a retry does
+not create a duplicate device. Tokens remain private. See the
+[shared record contract](../contracts/local-machine/2.0/README.md).
+
+Sidebar devices use fixed Chinese pinyin/name ordering and an ID tie-breaker,
+so polling, presence changes and same-name devices do not reorder the list.
+
+## Desktop onboarding
+
+Desktop owns its onboarding at `#/onboarding`: four pages (认识 Agent → 配置设备
+→ 连接手机 → 准备就绪) copied unchanged from
+`web-next/src/components/onboarding/reference`. Only the data source differs —
+Desktop provisions its own local device instead of reading one handed over by
+the plugin. The complete page records completion through
+`workbench:onboarding:complete`; entering the flow never records it.
+
+| Entry | Behavior |
+| --- | --- |
+| The user launches Desktop normally | Shown once, until `onboarding.completedAt` exists in the shared record. |
+| `osir-anywhere-desktop://onboarding?source=dsh-plugin&flowId=<id>` from the DSH plugin | Always shown, flag or not. A redelivered `flowId` is ignored; every new click starts a new flow. |
+| A silent login-item launch | Never shown and never recorded. |
+
+The flag lives in `<OS user home>/.agents-anywhere/connector-runtime.json` under
+`onboarding`, is written by the backend under the same short file transaction
+as the installation metadata, and is read by Main before the window is created.
+The plugin neither reads nor writes it. Onboarding entries bypass the Connector
+ownership gate, so a user can finish setup before the local Connector is ready.
+Development builds do not register the OS protocol, so a plugin entry arrives
+through argv instead of `open-url`.
+
+## Connector lifecycle
+
+Startup exclusion is implemented entirely in Python and includes CLI, Desktop and
+DSH plugin Connectors. Main calls `connector.acquireOwnership` before provisioning;
+Python records its actual PID and startup source, and verifies that any recorded
+PID still identifies that Connector process. It never treats the Electron or uv
+parent as the owner. RPC conflicts use `-32009 / connector_already_running`.
+Desktop displays a retryable conflict and stops automatic restart attempts. The RPC
+channel remains usable, and retry asks Python again. `connector.stop` stops the
+backend connection; ownership remains while that Python process is alive. Explicit
+Quit terminates it. The next start can replace records left by a crashed process.
+
+Until the first probe answers, ownership is `checking`, which the renderer shows
+as progress rather than as a failure. Any other failure opens a blocking dialog
+that quotes the underlying error and offers to copy it or open the logs folder.
+When the RPC process exits or times out before answering, the error includes its
+last stderr lines, where uv and Python explain a failed launch; stderr is logged
+in whole lines. Every failed acquisition, including a retry, is logged. If the
+backend stops after it became ready, owned or not, the dialog quotes the
+backend's exit code, last reported error and output, and its **Restart** starts a
+new backend, which probes ownership again; the Connector exits with the old one
+when its stdin closes. The backend owns the log, so Main appends to it directly
+whenever no ready backend is running. A launch whose backend never becomes ready
+shows a native error box with the log directory before quitting.
+
+Startup work after `ready` (shell environment, ownership, installation record,
+binding adoption, the launch auto-start) reports failures where the renderer
+looks: the gate while ownership is not settled, the Connector's `lastError` once
+it is. An RPC process that exits without being stopped also records its exit and
+last stderr lines in `lastError` until a new process reports its own state.
+
+- Successful Desktop login reuses a matching local device or provisions a
+  `connectorKind: "desktop"` device with the user-authenticated Connector API.
+- Successful local connection, reconnection, CLI pairing and pair-code completion
+  refresh the device list without opening an Agent quick-setup dialog.
+- Electron Main persists the returned `connectorId` and `connectorToken`, then
+  sends them to `anywhere-cli rpc` through `connector.saveConfig`.
+- Closing the window on macOS keeps the app and Connector running in the
+  background. Explicit Quit stops the runtime and terminates the full process
+  tree.
+- Open-at-login, silent launch, automatic Connector start, `uv` path, Python
+  path, PyPI mirror, Python download mirror, and log retention are Desktop
+  settings. Settings shows the resolved uv and Python, and hides the Python
+  download mirror while a bundled or saved interpreter is in use.
+- On first initialization without a saved mirror choice, Main checks the OS
+  preferred languages and selects Aliyun PyPI and npmmirror Python builds for
+  Chinese systems, or the official sources otherwise. It persists the choice before any `uv` provisioning process and
+  applies it as uv's first index ahead of the official PyPI fallback (see
+  first-run provisioning above), without a renderer prompt. Existing choices, including official PyPI, are
+  preserved; factory reset reapplies the system default.
+- An authentication failure is surfaced to the renderer and is not retried
+  automatically. Reconnection must be confirmed on that physical Desktop.
+- Factory reset revokes the current Desktop credential on the Server first. A
+  failed revoke does not silently erase the only local binding. After an
+  explicit second confirmation, `forceLocal: true` permits an offline local
+  reset without a login session; it also clears Electron web storage and cache.
+
+## Workbench terminals
+
+Terminals use the same Connector lifecycle as Web. Opening the terminal tool
+queries the selected device and workspace before creating a shell. Reloading the
+renderer restores existing terminal IDs and output from the Connector; local
+storage holds only view preferences, scoped to the actual server and account.
+Closing a terminal tab closes that terminal. Leaving the page, signing out, or
+quitting Desktop does not send terminal-close requests.
+
+Electron does not track terminal credentials, promote terminals to persistent
+mode, or renew their leases. Ordinary Connector cleanup remains in charge:
+30 minutes of inactivity by default, with exited records retained for 15 minutes.
+The bundled local Connector still stops when Desktop quits, so its terminals
+end with that process. Terminals on a separately running Connector can remain
+available under its normal cleanup rules.
+
+## Token boundary
+
+- The renderer supplies its user token only for an explicit create, reconnect,
+  disconnect, or factory-reset call.
+- The user token is used transiently by Electron Main. It is never written to
+  disk, logged, or passed to the Connector process.
+- `connectorToken` is persisted with restricted file permissions, but is never
+  returned through preload IPC.
+- The Connector receives only `serverUrl`, `connectorId`, and
+  `connectorToken`, and continues to use Connector-scoped authentication.
+
+## Notes
+
+- This package embeds a copied Next renderer under `renderer`.
+- The original repo-level `../web-next` app is not started or modified by the desktop dev script.
+- Treat `../web-next` as the upstream source for shared renderer code. Sync source, messages, public assets, scripts, tests, and shared configuration into `renderer`, then reapply the small Desktop-owned integration layer.
+- Desktop-owned behavior includes the Electron window and protocol bridge, renderer package identity and port, nested-workspace Next configuration, native title-bar spacing, window drag regions, the shell header, and Desktop sidebar behavior.
+- Do not copy generated or installed content such as `.next`, `node_modules`, `.yarn`, or `out` from `../web-next`.
+- Production/static mode expects `renderer/out`, or a custom `WORKBENCH_WEB_OUT_DIR`.
+
+Shared Web fixes synchronized on 2026-09-06 include device pairing, compact
+settings sections, project/directory defaults and creation, project ordering and
+expansion persistence, tool cards, file editing safeguards, and terminal restore.
+See the [frontend/Desktop handoff](../docs/migrations/main-to-v2/frontend-desktop-follow-up.md)
+for scope and verification. Pairing and mobile login use the selected public
+server address; native renderer URLs are never shared as connection addresses.
+
+### Universal macOS installers
+
+On macOS, `yarn dist` and `yarn dist:mac` build a universal DMG for Apple Silicon
+and Intel by default, bundling uv for both architectures. Explicit `--arm64` or
+`--x64` builds remain available for diagnostics. Both commands use the same
+signing and notarization credential checks.
+
+Use `yarn dist:mac --skip-build` to retry packaging after a completed app build;
+it requires existing compiled output and both uv bundles. Run a full build after
+changing application source. Yarn installs both CPU variants of optional native
+dependencies for universal packaging.
+
+For an offline packaging retry, set `WORKBENCH_ELECTRON_DIST` to a directory
+containing the matching Electron ZIPs for both macOS architectures.
+
+Runtime logs are persisted by Connector under `~/.agents-anywhere/logs/` as rotating
+JSONL segments. Desktop reads, follows, clears and exports them through the local
+`aa.local.v2.Logs` service; receiving a runtime log never writes another Desktop
+copy. Log storage settings apply to Desktop startup diagnostics only. When no
+Connector channel is available, the log view and export use those local startup
+diagnostics. Runtime retention and RPC semantics are documented in
+[the log contract](../contracts/dsh-bridge/2.0/logs.md).

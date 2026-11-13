@@ -1,0 +1,23 @@
+{
+  "cloud": {
+    "serverUrl": "https://anywhere.osirclaw.com",
+    "oauthWebOrigin": "https://anywhere.osirclaw.com"
+  },
+  "apiNamespace": "/api/v2",
+  "healthTimeoutMs": 10000,
+  "updates": {
+    "manifestUrl": "https://osirvedio.cn-nb1.rains3.com/osir-anywhere/releases/stable.json"
+  },
+  "oauth": {
+    "protocol": "osir-anywhere",
+    "clientId": "osir-anywhere-desktop",
+    "route": "/auth/desktop/authorize",
+    "scope": "identity:read",
+    "requestTtlMs": 600000,
+    "tokenTimeoutMs": 15000
+  },
+  "identity": {
+    "apiOrigin": "https://osirclaw.com",
+    "webOrigin": "https://osirclaw.com"
+  }
+}

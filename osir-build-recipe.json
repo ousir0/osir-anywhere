@@ -1,0 +1,25 @@
+{
+  "releaseId": "osir-anywhere-2.2.0-20261114-r1",
+  "config": {
+    "OSIR_IDENTITY_API_ORIGIN": "https://osirclaw.com",
+    "OSIR_IDENTITY_WEB_ORIGIN": "https://osirclaw.com",
+    "OSIR_ANYWHERE_API_ORIGIN": "https://anywhere.osirclaw.com",
+    "OSIR_ANYWHERE_OAUTH_WEB_ORIGIN": "https://anywhere.osirclaw.com",
+    "OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED": "1"
+  },
+  "oauthEvidence": {
+    "basis": "prior-contract-real-desktop-and-browser-verification",
+    "scope": "candidate-build-only",
+    "requiresFinalPackageReverification": true,
+    "documents": [
+      {
+        "path": "docs/OSIR-ANYWHERE-CONNECTION-VERIFICATION-2026-11-13.md",
+        "sha256": "335b92cbbc6fc0c8959a1efeaa425afeea2d47e2ce455dba562c0cad3992b2f4"
+      },
+      {
+        "path": "docs/OSIR-ANYWHERE-ALIYUN-ROLLOUT-2026-11-13.md",
+        "sha256": "62cd24881adfe3d2f2711901cb7e882f810dc64aa8ba24dbb36b72bad7c0f7f4"
+      }
+    ]
+  }
+}

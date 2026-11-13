@@ -1,7 +1,0 @@
-{
-  "sourceRepository": "agents-anywhere",
-  "sourcePath": "connector/pyproject.toml",
-  "sourceGitHead": "e8f0cb9e1d9aeca45331224653d0b7cacba39a3a",
-  "sha256": "bda552a6788457ccfa5534073ec295eac94fcadca59a8a68df1e9d90ec099920",
-  "scope": "Exact dependency declaration only; no Connector code, credentials or application configuration."
-}
