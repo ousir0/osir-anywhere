@@ -7,11 +7,25 @@ import { join } from 'node:path';
 import { bytes, digest, fingerprint, inspect } from './osir-anywhere-release-common.mjs';
 import { fingerprintTree } from './osir-native-smoke.mjs';
 import { parseArguments as provisionArguments } from './osir-native-smoke-provision.mjs';
-import { REPOSITORY, acceptanceMatrix, bindDownloadedArtifact, collectEvidence, githubMetadata, reviewedBindings, sealCache, unpackCache, unpackProductArchive, verifyHarness, verifyHarnessFiles, verifyProducer, verifyRemoteArtifacts, verifySmokeReport } from './osir-artifact-acceptance-ci.mjs';
+import { REPOSITORY, STDERR_LIMIT, acceptanceMatrix, bindDownloadedArtifact, boundedArchiveCommand, collectEvidence, githubMetadata, reviewedBindings, sanitizedStderr, sealCache, unpackCache, unpackProductArchive, verifyHarness, verifyHarnessFiles, verifyProducer, verifyRemoteArtifacts, verifySmokeReport } from './osir-artifact-acceptance-ci.mjs';
 
 const A = 'a'.repeat(40), B = 'b'.repeat(40), H = 'c'.repeat(40), X = '1'.repeat(64);
 const harness = { repository: REPOSITORY, commit: H, runId: 77, runAttempt: 2 };
 const clone = value => structuredClone(value);
+
+test('archive diagnostics preserve exact ordinary stderr, sanitize credentials and bound noisy failures', async () => {
+  const stderr = 'tar: cache/file: Cannot stat: No such file or directory\r\ntar: Error exit delayed from previous errors.\r\n';
+  const result = await boundedArchiveCommand(process.execPath, ['-e', 'process.stderr.write(process.argv[1]); process.exitCode=1', stderr]);
+  assert.equal(result.status, 1); assert.equal(result.stderr, stderr); assert.equal(result.stderrBytes, Buffer.byteLength(stderr)); assert.equal(result.stderrTruncated, false);
+  const secret = 'private-fixture-token';
+  assert.equal(sanitizedStderr(Buffer.from(`tar: ${secret} Bearer abc123 https://user:password@example.invalid/?token=abc123\u001b[31m\u0000`), { GH_TOKEN: secret }), 'tar: [REDACTED] [REDACTED authorization] https://[REDACTED]@example.invalid/?token=[REDACTED]');
+  const noisy = await boundedArchiveCommand(process.execPath, ['-e', 'process.stderr.write("x".repeat(100000));process.exitCode=1']);
+  assert.equal(noisy.stderr.length, STDERR_LIMIT); assert.equal(noisy.stderrBytes, 100000); assert.equal(noisy.stderrTruncated, true);
+  const missing = await boundedArchiveCommand('osir-missing-archive-tool-fixture', []);
+  assert.equal(missing.spawnFailed, true); assert.equal(missing.stderr, '');
+  const timeout = await boundedArchiveCommand(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { timeout: 50 });
+  assert.equal(timeout.timedOut, true);
+});
 
 test('workflow clean-runner flags are accepted by the actual provision CLI without relaxing native checks', () => {
   const base = join(tmpdir(), 'osir-cli-contract');
@@ -150,6 +164,8 @@ async function prepFixture(f) {
 test('separate-job cache transfer preserves symlinks, raw evidence and exact resolved lock with native/harness binding', async t => {
   const f = await fixture(t), { prep, report } = await prepFixture(f), bundle = join(f.root, 'bundle'), offline = join(f.root, 'offline');
   const sealed = await sealCache(f.spec, prep, bundle, harness);
+  const diagnostic = JSON.parse(await readFile(join(prep, 'cache-archive-command.json')));
+  assert.equal(diagnostic.result, 'passed'); assert.equal(diagnostic.status, 0); assert.deepEqual(diagnostic.harness, harness);
   assert.equal(sealed.cacheSha256, report.cache.sha256);
   await unpackCache(f.spec, bundle, offline, harness);
   assert.equal(await fingerprintTree(join(offline, 'cache')), report.cache.sha256);
@@ -157,6 +173,17 @@ test('separate-job cache transfer preserves symlinks, raw evidence and exact res
   await assert.rejects(unpackCache(f.spec, bundle, join(f.root, 'other-harness'), { ...harness, commit: A }), /another reviewed harness/);
   const changedSpec = clone(f.spec); changedSpec.runner.nativeMachine = 'darwin-x64';
   await assert.rejects(unpackCache(changedSpec, bundle, join(f.root, 'other-machine'), harness), /architecture/);
+});
+
+test('failed cache transfer remains failed even when warm preparation succeeded, preserving tar stderr', async t => {
+  const f = await fixture(t), { prep } = await prepFixture(f);
+  const diagnostic = { schemaVersion: 1, scope: 'native-cache-archive-command', result: 'failed', status: 1, stderr: 'tar: exact failure\n' };
+  await writeFile(join(prep, 'cache-archive-command.json'), bytes(diagnostic));
+  const evidence = join(f.root, 'failed-cache-evidence');
+  const result = await collectEvidence(f.spec, { warm: prep }, evidence, harness, 'warm');
+  assert.equal(result.result, 'failed');
+  assert.equal(result.releaseAcceptance, 'incomplete');
+  assert.deepEqual(JSON.parse(await readFile(join(evidence, 'warm', 'cache-archive-command.json'))), diagnostic);
 });
 
 test('corrupt cache archive cannot be unpacked; modified report lock/cache cannot be sealed', async t => {

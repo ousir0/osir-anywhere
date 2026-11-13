@@ -22,6 +22,10 @@ on:
         type: choice
         default: all
         options: [all, darwin-universal, win32-x64, win32-arm64]
+      cache_diagnostic_only:
+        description: Capture preparation and bounded sanitized tar evidence without launching smoke
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -141,7 +145,7 @@ jobs:
     # Successful architecture caches are reusable even if another architecture's
     # preparation failed. A missing cache fails its own job; no fake smoke report.
     needs: [review, warm-cache]
-    if: always() && needs.review.result == 'success' && !cancelled()
+    if: always() && needs.review.result == 'success' && !inputs.cache_diagnostic_only && !cancelled()
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.review.outputs.matrix) }}

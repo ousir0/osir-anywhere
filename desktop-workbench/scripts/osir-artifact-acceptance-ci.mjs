@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Independent CI harness: consume immutable build artifacts; never rebuild,
 // repackage, re-sign, publish, or synthesize native acceptance.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -213,6 +213,41 @@ async function warmEvidence(spec, prep) {
   return { report, names: [...names] };
 }
 
+export const STDERR_LIMIT = 16384;
+export function sanitizedStderr(raw, env = process.env) {
+  let text = Buffer.from(raw).subarray(0, STDERR_LIMIT).toString('utf8');
+  for (const [key, value] of Object.entries(env)) {
+    if (/token|password|secret|credential|api.?key/i.test(key) && typeof value === 'string' && value.length >= 8) text = text.split(value).join('[REDACTED]');
+  }
+  return text.replace(/\b(?:Bearer|Basic)\s+[^\s]+/gi, '[REDACTED authorization]')
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/([?&](?:token|key|signature|sig|password|secret)=)[^\s&#]*/gi, '$1[REDACTED]')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g, '[REDACTED]')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
+
+// Drain stderr without retaining unbounded output. Never serialize an exception
+// object or the environment; only sanitized stderr and fixed process metadata.
+export async function boundedArchiveCommand(tool, args, { env = process.env, timeout = 300000 } = {}) {
+  return new Promise(resolveResult => {
+    let child;
+    try { child = spawn(tool, args, { stdio: ['ignore', 'ignore', 'pipe'], env, windowsHide: true }); }
+    catch { resolveResult({ status: null, signal: null, spawnFailed: true, timedOut: false, stderr: '', stderrBytes: 0, stderrTruncated: false }); return; }
+    let kept = 0, total = 0, timedOut = false, spawnFailed = false;
+    const chunks = [], timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
+    child.stderr.on('data', chunk => {
+      total += chunk.length;
+      const part = chunk.subarray(0, Math.max(0, STDERR_LIMIT - kept));
+      if (part.length) { chunks.push(part); kept += part.length; }
+    });
+    child.on('error', () => { spawnFailed = true; });
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      resolveResult({ status, signal, spawnFailed, timedOut, stderr: sanitizedStderr(Buffer.concat(chunks), env), stderrBytes: total, stderrTruncated: total > kept });
+    });
+  });
+}
+
 export async function sealCache(spec, prep, output, harness) {
   check(isAbsolute(prep) && isAbsolute(output) && !within(prep, output) && !within(output, prep), 'Cache bundle must be independent of online preparation');
   const { report, names } = await warmEvidence(spec, prep);
@@ -221,7 +256,12 @@ export async function sealCache(spec, prep, output, harness) {
   const archive = join(output, 'offline-cache.tar');
   // tar preserves uv cache links and executable permissions; upload-artifact's
   // own zip serialization is not used for the cache tree itself.
-  execFileSync('tar', ['-cf', archive, '-C', prep, 'cache', ...names], { stdio: 'ignore', timeout: 300000 });
+  const command = await boundedArchiveCommand('tar', ['-cf', archive, '-C', prep, 'cache', ...names]);
+  const passed = command.status === 0 && !command.spawnFailed && !command.timedOut;
+  await immutableFile(join(prep, 'cache-archive-command.json'), bytes({ schemaVersion: 1, scope: 'native-cache-archive-command',
+    harness, nativeMachine: spec.runner.nativeMachine, expected: spec.expected, tool: 'tar', operation: 'create',
+    result: passed ? 'passed' : 'failed', ...command }));
+  check(passed, 'Cache tar creation failed; bounded sanitized stderr preserved in warm/cache-archive-command.json');
   check(report.cache.sha256 === await fingerprintTree(join(prep, 'cache')), 'Cache changed while archiving');
   const transfer = { schemaVersion: 1, scope: 'native-offline-cache-transfer', harness, nativeMachine: spec.runner.nativeMachine, expected: spec.expected,
     originalReceiptSha256: (await inspect(spec.buildReceiptPath)).sha256, archive: await inspect(archive), reportSha256: (await inspect(join(prep, 'dependency-cache.json'))).sha256,
@@ -287,7 +327,11 @@ export async function collectEvidence(spec, paths, output, harness, phase) {
     } catch (error) { if (error.code !== 'ENOENT') failures.push(`Could not preserve ${prefix} raw evidence`); }
   }
   try {
-    if (phase === 'warm') await warmEvidence(spec, paths.warm);
+    if (phase === 'warm') {
+      await warmEvidence(spec, paths.warm);
+      const archiveCommand = await json(join(paths.warm, 'cache-archive-command.json'));
+      check(archiveCommand.result === 'passed', 'Cache archive creation failed');
+    }
     else {
       const report = await json(join(paths.smoke, 'native-smoke.json')); verifySmokeReport(report, spec);
       for (const item of report.evidence) { safeName(item.path); await matches(join(paths.smoke, item.path), item); }
