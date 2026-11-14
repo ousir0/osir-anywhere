@@ -12,9 +12,9 @@ import { SHA, bytes, check, digest, fingerprint, immutableFile, inspect, json, m
 
 export const TOOL_VERSIONS = { 'electron-builder': '26.18.1', '@electron/asar': '3.4.1', typescript: '6.0.3' };
 export const UPGRADE_PRODUCT = Object.freeze({
-  sourceCommit: 'a85a573f7a424eb1ca557fc43b8d84e4d8ec000d',
-  sourceSha256: '50f155a61d75222134446cdb094645faa80677ea80a66a0fa02a578ca3fc85ad',
-  recipeSha256: '2f9e9ab2b224b2d41e20e002132d3f6ad63773507271ecaf85bc323ef1ed01fa',
+  sourceCommit: 'c11619cca3c68e705877024a8687f27be9d65a3a',
+  sourceSha256: '5712a25a90d626219812500fa6c0b247a560cea5d77a78fb603f219b5911115e',
+  recipeSha256: 'ed0c42acc6f5e663c3e35a13b35a1e21e4f6b5b2dd20089646f99869be338d87',
   version: FINAL_VERSION,
 });
 export function verifyUpgradeProduct(bindings) {
