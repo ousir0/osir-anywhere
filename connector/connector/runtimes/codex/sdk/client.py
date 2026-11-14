@@ -154,11 +154,15 @@ class CodexSdkClient:
         sdk: Any | None = None,
         model_gateway: ModelGateway | None = None,
         client_factory: Callable[[], Any] | None = None,
+        local_binding_config: Mapping[str, Any] | None = None,
     ) -> None:
         self._client = client
         self._sdk = sdk
         self._model_gateway = model_gateway
         self._client_factory = client_factory
+        # Trusted native config only, supplied by the OSIR provider, never
+        # RuntimeConfig/cloud values. It travels over stdio, never argv/logs.
+        self._local_binding_config = dict(local_binding_config) if local_binding_config is not None else None
         self._recovery_lock = asyncio.Lock()
         self._started = False
         self._handler: NotificationHandler | None = None
@@ -533,11 +537,11 @@ class CodexSdkClient:
         if low_level_client is not None:
             generation = self._generation
             started = await low_level_client.thread_start(
-                codex_permission_params(
+                self._bound_thread_params(codex_permission_params(
                     codex_thread_start_params(request, self._model_gateway),
                     request.sandbox,
                     "sandbox",
-                )
+                ))
             )
             thread_id = id_of(started.thread)
             if generation != self._generation:
@@ -551,6 +555,9 @@ class CodexSdkClient:
                 thread_id=thread_id,
                 payload={"id": thread_id} if thread_id is not None else {},
             )
+        if self._local_binding_config is not None:
+            from connector.runtimes.codex.osir_binding import ModelBindingUnavailable
+            raise ModelBindingUnavailable()
         if self._model_gateway is not None:
             raise RuntimeInvalidRequestError(
                 "Codex low-level client is required for model gateway configuration"
@@ -620,6 +627,9 @@ class CodexSdkClient:
                 turn_id=turn_id,
                 payload={"id": turn_id} if turn_id is not None else {},
             )
+        if self._local_binding_config is not None:
+            from connector.runtimes.codex.osir_binding import ModelBindingUnavailable
+            raise ModelBindingUnavailable()
         if codex_request_requires_low_level_turn_start(request):
             raise RuntimeInvalidRequestError(
                 codex_low_level_turn_start_required_message(request)
@@ -708,16 +718,21 @@ class CodexSdkClient:
             return
         thread_resume = getattr(low_level_client, "thread_resume", None)
         if not callable(thread_resume):
+            if self._local_binding_config is not None:
+                from connector.runtimes.codex.osir_binding import (
+                    ModelBindingUnavailable,
+                )
+                raise ModelBindingUnavailable()
             return
         generation = self._generation
         try:
             resumed = await thread_resume(
                 request.thread_id,
-                codex_permission_params(
+                self._bound_thread_params(codex_permission_params(
                     codex_thread_resume_params(request, self._model_gateway),
                     request.sandbox,
                     "sandbox",
-                ),
+                )),
             )
         except JsonRpcError as exc:
             if exc.code == -32600 and "already has an active writer" in exc.message:
@@ -735,6 +750,16 @@ class CodexSdkClient:
             self._remember_thread(thread)
         if thread_id is not None:
             self._loaded_thread_ids.add(thread_id)
+
+    def _bound_thread_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        if self._local_binding_config is None:
+            return params
+        import copy
+        route = copy.deepcopy(self._local_binding_config)
+        selected = params.get("model") or route["model"]
+        route["model"] = selected
+        return {**params, "config": route, "modelProvider": route["model_provider"],
+            "model": selected}
 
     def thread_loaded(self, thread_id: str) -> bool:
         """Whether this app-server generation started or resumed ``thread_id``.
@@ -1265,11 +1290,13 @@ class CodexSdkClient:
             await self._handler(message)
 
 
-def sdk_client_from_config(config: RuntimeConfig) -> CodexRuntimeClient:
+def sdk_client_from_config(
+    config: RuntimeConfig, *, local_binding=None,
+) -> CodexRuntimeClient:
     sdk = _load_codex_sdk()
 
     def create_client() -> Any:
-        return _create_sdk_client(sdk, config)
+        return _create_sdk_client(sdk, config, local_binding=local_binding)
 
     client = create_client()
     model_gateway = model_gateway_from_config(config.values.get("modelGateway"))
@@ -1278,6 +1305,7 @@ def sdk_client_from_config(config: RuntimeConfig) -> CodexRuntimeClient:
         sdk=sdk,
         model_gateway=model_gateway,
         client_factory=create_client,
+        local_binding_config=local_binding.native_config() if local_binding is not None else None,
     )
 
 
@@ -1310,10 +1338,13 @@ def _load_codex_sdk() -> Any:
     raise RuntimeInvalidRequestError("Codex SDK package is not importable")
 
 
-def _create_sdk_client(sdk: Any, config: RuntimeConfig) -> Any:
+def _create_sdk_client(sdk: Any, config: RuntimeConfig, *, local_binding=None) -> Any:
     async_codex = getattr(sdk, "AsyncCodex", None)
     if callable(async_codex):
-        return async_codex(_sdk_config(sdk, config))
+        return async_codex(_sdk_config(sdk, config, local_binding=local_binding))
+    if local_binding is not None:
+        from connector.runtimes.codex.osir_binding import ModelBindingUnavailable
+        raise ModelBindingUnavailable()
     for factory_name in ("create_runtime_client", "create_client", "Client", "Codex"):
         factory = getattr(sdk, factory_name, None)
         if not callable(factory):
@@ -1330,10 +1361,27 @@ def _create_sdk_client(sdk: Any, config: RuntimeConfig) -> Any:
     )
 
 
-def _sdk_config(sdk: Any, config: RuntimeConfig) -> Any:
+def _sdk_config(sdk: Any, config: RuntimeConfig, *, local_binding=None) -> Any:
     config_cls = getattr(sdk, "CodexConfig", None)
     if not callable(config_cls):
+        if local_binding is not None:
+            from connector.runtimes.codex.osir_binding import ModelBindingUnavailable
+            raise ModelBindingUnavailable()
         return None
+    if local_binding is not None:
+        import json
+
+        from connector.runtimes.codex.osir_binding import bound_environment
+        # Start in the verified home, outside an arbitrary project layer. Only
+        # non-secret scalars are allowed in argv. Full provider definitions are
+        # pinned separately on thread/start and thread/resume over stdio.
+        route = local_binding.native_config()
+        safe_keys = {"model", "model_provider", "model_catalog_json", "model_reasoning_effort"}
+        return config_cls(env=bound_environment(local_binding.home),
+            cwd=str(local_binding.home),
+            config_overrides=tuple(f"{key}={json.dumps(value)}"
+                for key, value in route.items() if key in safe_keys),
+            client_name="osir_anywhere_connector", client_title="OSIR Anywhere Connector")
     values = config.values
     environment_overrides = values.get("environment")
     use_system_codex = values.get("useSystemCodex", True)

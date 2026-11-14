@@ -193,7 +193,7 @@ class RuntimeInstanceHost(RuntimeHostClient):
         if self.instance.runtime_id == self.instance.runtime_type:
             return self.connector_id
         namespace = self.instance.runtime_id
-        if self.source_key is not None:
+        if self.source_key is not None and not self.source_key.local_only:
             namespace = f"{namespace}:{_source_key_digest(self.source_key)}"
         return f"{self.connector_id}:{self.instance.runtime_type}:{namespace}"
 
@@ -427,7 +427,7 @@ class RuntimeInstanceHost(RuntimeHostClient):
         metadata: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         result = _instance_metadata(self.instance, metadata)
-        if self.source_key is not None:
+        if self.source_key is not None and not self.source_key.local_only:
             result["runtimeSource"] = {
                 "kind": self.source_key.kind,
                 "key": self.source_key.key,

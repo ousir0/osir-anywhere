@@ -56,6 +56,8 @@ export type BackendInit = {
    */
   pythonBundleDir: string;
   homePath: string;
+  /** Fixed by the OSIR main process; never renderer/server configuration. */
+  clientModelBinding?: "required-v1";
   documentsPath: string;
   packaged: boolean;
   /** Account login/recovery must not grant remote-device startup permission. */

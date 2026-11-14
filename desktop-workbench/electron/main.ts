@@ -916,6 +916,7 @@ function backendInit(): BackendInit {
     uvBundleDir: resolveUvBundleDir(),
     pythonBundleDir: resolvePythonBundleDir(),
     homePath: app.getPath("home"),
+    clientModelBinding: "required-v1",
     documentsPath: app.getPath("documents"),
     packaged: app.isPackaged,
     requireExplicitConnection: true,

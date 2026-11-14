@@ -89,6 +89,7 @@ export class BackendState {
       pythonBundleDir: init.pythonBundleDir,
       packaged: init.packaged,
       homePath: init.homePath,
+      clientModelBinding: init.clientModelBinding,
       shellEnvironment: {},
       settings: this.settings,
       binding: this.binding,

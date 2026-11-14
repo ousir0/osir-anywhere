@@ -75,6 +75,9 @@ class CodexSessionReader:
     pending_messages: PendingClientMessageRegistry | None = None
     timeline: CodexTimelineAccumulator | None = None
     notice_handler: CodexNoticeHandler | None = None
+    # Product-bound runtimes use only explicitly registered SDK threads. Do not
+    # inspect rollout/index files or other Codex processes in that mode.
+    native_history_enabled: bool = True
     _pending_sync_states: dict[str, tuple[str, dict[str, Any]]] = field(
         default_factory=dict,
         init=False,
@@ -174,10 +177,10 @@ class CodexSessionReader:
         local_state = codex_sessions.local_thread_state(thread_ref)
         sync_marker = codex_sessions.thread_sync_marker(thread_ref)
         self._observed_threads[thread_id] = thread_ref
-        source = await asyncer.asyncify(source_signature)(thread_ref)
+        source = await asyncer.asyncify(source_signature)(thread_ref) if self.native_history_enabled else None
         native_activity = await asyncer.asyncify(read_native_thread_activity)(
             thread_ref
-        )
+        ) if self.native_history_enabled else None
         if source is not None:
             # API timestamps have second precision and miss fast changes within a second.
             sync_marker = hashlib.sha256(
@@ -315,6 +318,8 @@ class CodexSessionReader:
     async def _read_indexed_snapshot(
         self, session_id: str, external_session_id: str | None, previous: Mapping[str, Any] | None,
     ) -> tuple[RuntimeTimelineSnapshot | None, dict[str, Any], dict[str, str]] | None:
+        if not self.native_history_enabled:
+            return None
         page_reader = getattr(self.client, "list_thread_turns_page", None)
         if not external_session_id or not callable(page_reader) or self.timeline is None:
             return None
@@ -443,7 +448,7 @@ class CodexSessionReader:
         self,
         external_session_id: str | None,
     ) -> NativeThreadActivity | None:
-        if external_session_id is None:
+        if not self.native_history_enabled or external_session_id is None:
             return None
         thread = self._observed_threads.get(external_session_id)
         if thread is None:
@@ -472,7 +477,7 @@ class CodexSessionReader:
             return {}
         # thread/read reports no approval or sandbox settings and thread/resume
         # would take the writer lock, so permission comes from the rollout.
-        if isinstance(rollout_path, str):
+        if self.native_history_enabled and isinstance(rollout_path, str):
             permission = await asyncer.asyncify(rollout_permission_settings)(rollout_path)
             thread_state = {**permission, **thread_state}
         selections = await selections_from_thread_state(

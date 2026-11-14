@@ -90,6 +90,8 @@ type ConnectorSupervisorOptions = {
   pythonBundleDir: string;
   packaged: boolean;
   homePath: string;
+  /** Native product policy; no remote or renderer override. */
+  clientModelBinding?: "required-v1";
   shellEnvironment: NodeJS.ProcessEnv;
   settings: DesktopSettingsStore;
   binding: DesktopBindingStore;
@@ -1026,6 +1028,16 @@ export class ConnectorSupervisor {
       delete environment.Path;
       delete environment.path;
       environment.Path = environment.PATH;
+    }
+    // Last assignment wins over the process/login-shell snapshots. A normal
+    // OSIR Desktop always requires native Client model binding; upstream
+    // supervisors do not inherit accidental OSIR policy from a shell.
+    if (this.options.clientModelBinding === "required-v1") {
+      environment.OSIR_CLIENT_MODEL_BINDING = "required-v1";
+      environment.OSIR_CLIENT_BINDING_HOME = this.options.homePath;
+    } else {
+      delete environment.OSIR_CLIENT_MODEL_BINDING;
+      delete environment.OSIR_CLIENT_BINDING_HOME;
     }
     return environment;
   }

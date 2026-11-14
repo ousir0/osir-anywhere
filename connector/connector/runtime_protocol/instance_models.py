@@ -305,10 +305,15 @@ class RuntimeSourceKey:
 
     kind: str
     key: str
+    # Local sources may contain filesystem identities. Keep both the original
+    # and its derived namespace digest out of Server-bound payloads.
+    local_only: bool = False
 
     def __post_init__(self) -> None:
         _require_non_blank(self.kind, "kind")
         _require_non_blank(self.key, "key")
+        if not isinstance(self.local_only, bool):
+            raise TypeError("local_only must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)

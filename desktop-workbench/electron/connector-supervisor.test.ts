@@ -417,7 +417,8 @@ test("runtime logs retain central sequences, paginate and export without a secon
   } finally { await supervisor.shutdown(); }
 });
 
-function supervisorFixture(root: string, options: { packaged?: boolean; onOwnership?: (state: OwnershipState) => void } = {}) {
+function supervisorFixture(root: string, options: { packaged?: boolean; onOwnership?: (state: OwnershipState) => void;
+  clientModelBinding?: "required-v1"; shellEnvironment?: NodeJS.ProcessEnv } = {}) {
   fs.writeFileSync(path.join(root, "pyproject.toml"), "");
   const settings = new DesktopSettingsStore(path.join(root, "settings.json"), ["en-US"]);
   settings.save({ uvPath: process.execPath });
@@ -425,13 +426,39 @@ function supervisorFixture(root: string, options: { packaged?: boolean; onOwners
     configPath: path.join(root, "connector.json"), dataPath: root, connectorDir: root, resourcesPath: root,
     uvBundleDir: path.join(root, "build", "uv"),
     pythonBundleDir: path.join(root, "build", "python"),
-    packaged: options.packaged ?? false, homePath: root, shellEnvironment: {}, settings,
+    packaged: options.packaged ?? false, homePath: root, shellEnvironment: options.shellEnvironment ?? {}, settings,
+    clientModelBinding: options.clientModelBinding,
     binding: new DesktopBindingStore(path.join(root, "binding.json")),
     logs: new ConnectorLogStore(path.join(root, "logs"), () => settings.get()),
     onOwnership: options.onOwnership, onState: () => {}, onLog: () => {},
     connectControl: async () => fakeChannel(),
   });
 }
+
+test("OSIR model policy is fixed after inherited environment and absent for upstream", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aa-osir-bound-policy-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const previousPolicy = process.env.OSIR_CLIENT_MODEL_BINDING;
+  const previousHome = process.env.OSIR_CLIENT_BINDING_HOME;
+  process.env.OSIR_CLIENT_MODEL_BINDING = "inherited-disable";
+  process.env.OSIR_CLIENT_BINDING_HOME = path.join(root, "wrong-process-home");
+  try {
+    for (const policy of ["required-v1", undefined] as const) {
+      const supervisor = supervisorFixture(root, { clientModelBinding: policy,
+        shellEnvironment: { OSIR_CLIENT_MODEL_BINDING: "wrong-shell-policy",
+          OSIR_CLIENT_BINDING_HOME: path.join(root, "wrong-shell-home") } });
+      const env = (supervisor as unknown as { connectorEnvironment(): NodeJS.ProcessEnv }).connectorEnvironment();
+      assert.equal(env.OSIR_CLIENT_MODEL_BINDING, policy);
+      assert.equal(env.OSIR_CLIENT_BINDING_HOME, policy ? root : undefined);
+      await supervisor.shutdown();
+    }
+  } finally {
+    if (previousPolicy === undefined) delete process.env.OSIR_CLIENT_MODEL_BINDING;
+    else process.env.OSIR_CLIENT_MODEL_BINDING = previousPolicy;
+    if (previousHome === undefined) delete process.env.OSIR_CLIENT_BINDING_HOME;
+    else process.env.OSIR_CLIENT_BINDING_HOME = previousHome;
+  }
+});
 
 function launchScript(t: TestContext, script: string): void {
   const spawn = childProcess.spawn;
