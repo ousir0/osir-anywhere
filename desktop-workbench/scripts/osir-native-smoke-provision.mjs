@@ -50,7 +50,7 @@ import { homedir, hostname, networkInterfaces, tmpdir, userInfo } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertNativeMachine, bindInputs, command, fileIdentity, fingerprintTree, NativeAdapter, runSmoke, smokeEnvironment, validateSpec, verifyCleanAccount } from './osir-native-smoke.mjs';
-import { observeWindowsGui } from './osir-windows-native-observation.mjs';
+import { observeWindowsGui, runWindowsGuiProbe } from './osir-windows-native-observation.mjs';
 
 // "localhost" is the supported SBPL selector, not itself proof of loopback-only
 // enforcement. Real controls below detect its broader local-interface meaning.
@@ -137,11 +137,7 @@ export async function nativeGuiProvenance(env) {
     return { platform: 'darwin', processId: process.pid, consoleUser: r.stdout.trim(), interactiveDesktop: true, basis: 'live-dev-console-owner' };
   }
   check(process.platform === 'win32', 'Unsupported native GUI platform');
-  const code = `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class SmokeDesktop{[DllImport("user32.dll",SetLastError=true)]public static extern IntPtr OpenInputDesktop(uint f,bool i,uint a);[DllImport("user32.dll")]public static extern bool CloseDesktop(IntPtr h);}';$s=(Get-Process -Id ${process.pid}).SessionId;$h=[SmokeDesktop]::OpenInputDesktop(0,$false,1);if($s -le 0 -or $h -eq [IntPtr]::Zero -or -not [Environment]::UserInteractive){throw 'No accessible interactive Windows desktop/session'};[void][SmokeDesktop]::CloseDesktop($h);@{platform='win32';processId=${process.pid};sessionId=$s;interactiveDesktop=$true;basis='live-input-desktop-and-session'}|ConvertTo-Json -Compress`;
-  const r = await command('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', code], { env, timeout: 30000 });
-  check(r.code === 0, `No native Windows GUI: ${r.stderr.slice(0, 200)}`);
-  const gui = JSON.parse(r.stdout);
-  check(gui.processId === process.pid && gui.interactiveDesktop === true && gui.sessionId > 0, 'Invalid live Windows GUI provenance'); return gui;
+  return runWindowsGuiProbe(env, command);
 }
 
 async function newDirectory(path) {

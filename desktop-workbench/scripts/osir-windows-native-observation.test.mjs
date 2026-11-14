@@ -6,7 +6,139 @@ import { join } from 'node:path';
 import { observeSmokeGui } from './osir-native-smoke-provision.mjs';
 import { HARNESS_FILES } from './osir-artifact-acceptance-ci.mjs';
 import { REVIEW_FILES } from './osir-native-upgrade-acceptance.ci.mjs';
-import { NSIS_OBSERVE_AT_MS, NSIS_TIMEOUT_MS, PROCESS_PROBE_TIMEOUT_MS, observeWindowsGui, runObservedWindowsNsis, WINDOWS_PROCESS_OBSERVATION } from './osir-windows-native-observation.mjs';
+import { command } from './osir-native-smoke.mjs';
+import { observeUpgradeGui } from './osir-native-upgrade-acceptance.runtime.mjs';
+import { GUI_PHASES, GUI_TIMEOUT_MS, NSIS_OBSERVE_AT_MS, NSIS_TIMEOUT_MS, PROCESS_PROBE_TIMEOUT_MS, observeWindowsGui, runObservedWindowsNsis, runWindowsGuiProbe, windowsGuiPhaseTrace, windowsGuiProbeScript, WINDOWS_PROCESS_OBSERVATION } from './osir-windows-native-observation.mjs';
+
+const probeId = '1234567890abcdef';
+const phaseLine = (phase, extra = {}, id = probeId) => JSON.stringify({ schemaVersion: 1, kind: 'windows-native-gui-phase', probeId: id, phase, ...extra }) + '\r\n';
+const phasePrefix = count => GUI_PHASES.slice(0, count).map(phase => phaseLine(phase)).join('');
+
+test('phase trace preserves exact bounded CRLF JSON, recognizes every active operation and complete return', () => {
+  for (let count = 0; count <= GUI_PHASES.length; count++) {
+    const raw = phasePrefix(count), trace = windowsGuiPhaseTrace(raw, probeId);
+    assert.equal(trace.rawPhaseJsonl, raw); assert.equal(trace.rawPhaseBytes, Buffer.byteLength(raw));
+    assert.equal(trace.traceValid, true); assert.equal(trace.traceComplete, count === GUI_PHASES.length);
+    assert.equal(trace.lastPhase, GUI_PHASES[count - 1] ?? null);
+    assert.equal(trace.nextUnconfirmedPhase, GUI_PHASES[count] ?? null);
+    const last = GUI_PHASES[count - 1];
+    assert.equal(trace.activeOperation, last?.endsWith('-before') ? last.slice(0, -7) : null);
+    assert.ok(trace.rawPhaseBytes <= 4096);
+  }
+});
+
+test('phase evidence drops non-protocol secrets, wrong nonce, extra fields, malformed and out-of-order marks', () => {
+  const secret = 'mk_synthetic_secret';
+  const ignored = windowsGuiPhaseTrace(secret + '\n' + phaseLine('powershell-entered', {}, 'ffffffffffffffff'), probeId);
+  assert.equal(ignored.rawPhaseJsonl, ''); assert.equal(ignored.lastPhase, null);
+  for (const suffix of [phaseLine('get-process-before'), phaseLine('powershell-entered'),
+    phaseLine('add-type-before', { credential: secret }), phaseLine(secret),
+    '{"kind":"windows-native-gui-phase","probeId":"1234567890abcdef",broken-json\n']) {
+    const trace = windowsGuiPhaseTrace(phasePrefix(1) + suffix, probeId);
+    assert.equal(trace.traceValid, false); assert.equal(trace.activeOperation, null); assert.equal(trace.nextUnconfirmedPhase, null);
+    assert.doesNotMatch(trace.rawPhaseJsonl, /mk_synthetic|credential|broken-json/);
+  }
+  const oversized = windowsGuiPhaseTrace(phasePrefix(1) + ' '.repeat(10000) + phaseLine('add-type-before'), probeId);
+  assert.equal(oversized.truncated, true); assert.equal(oversized.traceValid, false); assert.ok(oversized.rawPhaseBytes <= 4096);
+});
+
+test('probe script marks every original operation without changing the desktop predicate or interpolation boundary', () => {
+  const script = windowsGuiProbeScript(2748, probeId);
+  let position = -1;
+  for (const phase of GUI_PHASES) {
+    const next = script.indexOf(`"phase":"${phase}"`); assert.ok(next > position); position = next;
+  }
+  assert.ok(script.indexOf('powershell-entered') < script.indexOf('Add-Type -TypeDefinition'));
+  assert.match(script, /if\(\$s -le 0 -or \$h -eq \[IntPtr\]::Zero -or -not \[Environment\]::UserInteractive\)/);
+  assert.match(script, /OpenInputDesktop\(0,\$false,1\)/); assert.match(script, /\$guiProcess=Get-Process -Id 2748;/);
+  assert.match(script, /\$s=\$guiProcess.SessionId;/); assert.match(script, /processId=2748/);
+  assert.doesNotMatch(script, /Start-Process|Stop-Process|Set-ExecutionPolicy|Get-Credential|Get-CimInstance|CommandLine/);
+  assert.equal(GUI_TIMEOUT_MS, 30000);
+  assert.throws(() => windowsGuiProbeScript('2748;exit 0', probeId), /PID/);
+  assert.throws(() => windowsGuiProbeScript(2748, "x';exit 0"), /observation ID/);
+});
+
+function probeRunner({ count = 0, code = 1, stdout = '', spawn = true, fail } = {}) {
+  const calls = [];
+  const run = async (...args) => {
+    calls.push(args); if (spawn) args[2].onSpawn({ pid: 9001 });
+    const result = { executable: args[0], args: args[1], code, signal: null, stdout, stderr: phasePrefix(count) };
+    if (fail) throw Object.assign(fail, { commandResult: result });
+    return result;
+  };
+  return { run, calls };
+}
+
+test('missing entry marker distinguishes observed spawn from launch not observed without claiming an API stalled', async () => {
+  for (const spawn of [false, true]) {
+    const f = probeRunner({ spawn, fail: Error('Native command timed out') });
+    await assert.rejects(runWindowsGuiProbe({}, f.run, 2748, { probeId }), error => {
+      assert.equal(error.probeObservation.location, spawn ? 'spawned-before-first-powershell-marker' : 'process-spawn-not-observed');
+      assert.equal(error.probeObservation.spawnObserved, spawn); assert.equal(error.probeObservation.lastPhase, null);
+      assert.equal(error.probeObservation.rawPhaseJsonl, ''); return true;
+    });
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0][2].timeout, 30000);
+  }
+});
+
+for (const operation of ['add-type', 'get-process', 'session-id', 'open-input-desktop', 'desktop-predicate', 'close-desktop', 'result-json']) {
+  test(`timeout attributes only the entered but unreturned ${operation} span`, async () => {
+    const count = GUI_PHASES.indexOf(`${operation}-before`) + 1;
+    const failure = Error('Native command timed out'), f = probeRunner({ count, code: 0, stdout: JSON.stringify({ processId: 2748, sessionId: 2, interactiveDesktop: true }), fail: failure });
+    await assert.rejects(runWindowsGuiProbe({}, f.run, 2748, { probeId }), error => {
+      assert.equal(error, failure); assert.equal(error.probeObservation.location, operation);
+      assert.equal(error.probeObservation.rawPhaseJsonl, phasePrefix(count)); return true;
+    });
+    assert.equal(f.calls[0][2].timeout, 30000); assert.equal(f.calls.length, 1);
+  });
+}
+
+test('completed phases never replace exit/PID/session/interactive checks, and original rejection is not retried', async () => {
+  for (const value of [{ processId: 9999, sessionId: 2, interactiveDesktop: true },
+    { processId: 2748, sessionId: 0, interactiveDesktop: true }, { processId: 2748, sessionId: 2, interactiveDesktop: false }]) {
+    const f = probeRunner({ count: GUI_PHASES.length, code: 0, stdout: JSON.stringify(value) });
+    await assert.rejects(runWindowsGuiProbe({}, f.run, 2748, { probeId }), error => {
+      assert.match(error.message, /Invalid live Windows GUI/); assert.equal(error.probeObservation.traceComplete, true); return true;
+    });
+  }
+  const f = probeRunner({ count: GUI_PHASES.length, code: 1, stdout: JSON.stringify({ processId: 2748, sessionId: 2, interactiveDesktop: true }) });
+  const records = [];
+  await assert.rejects(observeWindowsGui(() => runWindowsGuiProbe({}, f.run, 2748, { probeId }), async (_name, raw) => records.push(JSON.parse(raw)), 'runner-gui'), /No native Windows GUI/);
+  assert.equal(f.calls.length, 1); assert.equal(records[0].probeObservation.traceComplete, true);
+});
+
+test('success keeps original GUI identity, while smoke/recheck and upgrade failures retain raw phase JSON', async t => {
+  const value = { platform: 'win32', processId: 2748, sessionId: 2, interactiveDesktop: true, basis: 'live-input-desktop-and-session' };
+  const success = probeRunner({ count: GUI_PHASES.length, code: 0, stdout: JSON.stringify(value) });
+  const result = await runWindowsGuiProbe({}, success.run, 2748, { probeId });
+  const { probeObservation, ...identity } = result; assert.deepEqual(identity, value); assert.equal(probeObservation.traceComplete, true);
+  const dir = await mkdtemp(join(tmpdir(), 'osir-gui-phase-unit-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  for (const stage of ['runner-gui', 'runner-gui-recheck']) {
+    const f = probeRunner({ count: 2, fail: Error('Native command timed out') });
+    await assert.rejects(observeSmokeGui({}, dir, stage, { platform: 'win32', probe: () => runWindowsGuiProbe({}, f.run, 2748, { probeId }) }));
+    for (const n of [1, 2]) assert.equal(JSON.parse(await readFile(join(dir, `${stage}-attempt-${n}.json`))).probeObservation.location, 'add-type');
+    assert.equal(f.calls.length, 2);
+  }
+  const f = probeRunner({ count: 6, fail: Error('Native command timed out') }), records = [];
+  await assert.rejects(observeUpgradeGui({}, async (_name, raw) => records.push(JSON.parse(raw)), () => runWindowsGuiProbe({}, f.run, 2748, { probeId }), 'win32'));
+  assert.equal(records.length, 2); assert.ok(records.every(row => row.probeObservation.rawPhaseJsonl === phasePrefix(6)));
+});
+
+test('real synthetic Node child proves spawn callback and flushed timeout evidence survive command cleanup', async () => {
+  const records = []; const stderr = phasePrefix(2);
+  const run = (exe, args, options) => {
+    assert.equal(exe, 'powershell.exe'); assert.equal(options.timeout, 30000);
+    return command(process.execPath, ['-e', `process.stderr.write(${JSON.stringify(stderr)});setInterval(()=>{},1000)`], { ...options, timeout: 750 });
+  };
+  await assert.rejects(runWindowsGuiProbe({}, run, process.pid, { probeId }), error => {
+    records.push(error.probeObservation); assert.equal(error.message, 'Native command timed out');
+    assert.equal(error.probeObservation.spawnObserved, true); assert.equal(error.probeObservation.location, 'add-type');
+    assert.equal(error.probeObservation.rawPhaseJsonl, stderr); assert.ok(error.probeObservation.spawned.pid > 0); return true;
+  });
+  let calls = 0;
+  await assert.rejects(command(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { env: {}, timeout: 2000, onSpawn: () => { calls++; throw Error('synthetic observer failure'); } }), /spawn observation failed/);
+  assert.equal(calls, 1); assert.equal(records.length, 1);
+});
 
 const gui = { platform: 'win32', processId: 2748, sessionId: 2, interactiveDesktop: true };
 const timeout = () => Object.assign(Error('Native command timed out'), { commandResult: {

@@ -13,13 +13,112 @@ import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 import { fileIdentity, fingerprintTree } from './osir-native-smoke.mjs';
 import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
 import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, observeUpgradeHardware, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
-import { observeUpgradeGui, ownedExit, packagedDiscoveryProbe, packagedWindowState, requestUpgradeQuit, SEED_SETTINGS, syntheticUpgradeLaunch, UpgradeAdapter, waitForUpgradeWelcome, waitForUpgradeWindow } from './osir-native-upgrade-acceptance.runtime.mjs';
+import { Inspector, observeUpgradeGui, ownedExit, packagedDiscoveryProbe, packagedWindowState, recordInspectorProtocolFailure, requestUpgradeQuit, sanitizeInspectorProtocolError, SEED_SETTINGS, syntheticUpgradeLaunch, UpgradeAdapter, waitForUpgradeWelcome, waitForUpgradeWindow } from './osir-native-upgrade-acceptance.runtime.mjs';
 import { electronFromLock, reuseExtractedRuntime, validateElectronFramework } from './osir-native-upgrade-acceptance.extract.mjs';
 import { collectRaw, discoveryTestSources, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
 import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
 
 const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
 const identity = data => ({ size: data.length, sha256: digest(data) });
+
+class SyntheticInspectorSocket extends EventTarget {
+  readyState = 1;
+  requests = [];
+  send(value) { this.requests.push(JSON.parse(value)); }
+  reply(value) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
+  close() { this.readyState = 3; }
+}
+
+test('inspector diagnostics retain only fixed protocol text, local method/operation and numeric protocol code', () => {
+  assert.deepEqual(sanitizeInspectorProtocolError('Runtime.evaluate', 'window-state', {
+    code: -32000, message: 'Cannot find context with specified id', data: 'Invalid parameters', extra: 'NEVER_RECORD_EXTRA',
+  }), { schemaVersion: 1, kind: 'inspector-protocol-error', method: 'Runtime.evaluate', operation: 'window-state',
+    error: { code: -32000, message: 'Cannot find context with specified id', data: 'Invalid parameters' } });
+  const invalid = sanitizeInspectorProtocolError('NEVER_RECORD_METHOD', 'NEVER_RECORD_OPERATION', { code: 'NEVER_RECORD_CODE' });
+  assert.equal(invalid.method, '[invalid-method]'); assert.equal(invalid.operation, '[invalid-operation]');
+  assert.deepEqual(invalid.error.code, { omitted: true });
+});
+
+test('inspector diagnostic text fails closed for credentials, URLs, paths, JSON and unknown short strings', () => {
+  for (const text of ['Bearer abc', 'password=q', 'https://user:pass@example.test/?token=q', '/Users/synthetic/private',
+    '{"token":"q"}', 'q', 'Internal error token=q', 'Promise was collected\npassword=q', 'A'.repeat(100000)]) {
+    const diagnostic = sanitizeInspectorProtocolError('Runtime.evaluate', 'packaged-action', { code: -32000, message: text, data: text });
+    assert.deepEqual(diagnostic.error.message, { type: 'string', omitted: true, length: text.length });
+    assert.deepEqual(diagnostic.error.data, { type: 'string', omitted: true, length: text.length });
+    assert.ok(Buffer.byteLength(JSON.stringify(diagnostic)) < 1024);
+  }
+});
+
+test('inspector diagnostics never traverse arbitrary data or call getters, coercion or toJSON', () => {
+  let calls = 0;
+  const arbitrary = { token: 'NEVER_RECORD_SECRET', get nested() { calls++; throw Error('getter invoked'); }, toJSON() { calls++; throw Error('toJSON invoked'); } };
+  for (const data of [arbitrary, [arbitrary], null, true, 123, undefined, () => { calls++; }, Symbol('NEVER_RECORD_SYMBOL')]) {
+    const diagnostic = sanitizeInspectorProtocolError('Runtime.evaluate', 'packaged-action', { code: arbitrary, message: arbitrary, data });
+    assert.equal(diagnostic.error.data.omitted, true);
+    assert.ok(!JSON.stringify(diagnostic).includes('NEVER_RECORD')); assert.deepEqual(diagnostic.error.code, { omitted: true });
+  }
+  const accessors = Object.defineProperties({}, Object.fromEntries(['code', 'message', 'data'].map(key => [key, { get() { calls++; throw Error('field getter invoked'); } }])));
+  assert.ok(JSON.stringify(sanitizeInspectorProtocolError('Runtime.evaluate', 'packaged-action', accessors)).length < 1024);
+  assert.equal(calls, 0);
+});
+
+test('inspector binds protocol errors to the pending request and writes final/discovery raw evidence before rethrow', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'osir-inspector-diagnostic-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const report = { evidence: [] }, evidence = await evidenceWriter(root, report);
+  for (const stage of ['final', 'discovery']) {
+    const socket = new SyntheticInspectorSocket(), inspector = new Inspector(socket); t.after(() => inspector.close());
+    const expression = stage === 'final' ? '(packagedWindowState)() /* NEVER_RECORD_EXPRESSION */' : 'NEVER_RECORD_EXPRESSION';
+    const evaluation = inspector.evaluate(expression);
+    const request = socket.requests[0]; assert.equal(request.method, 'Runtime.evaluate');
+    const rejected = assert.rejects(async () => {
+      try { await evaluation; }
+      catch (error) { await recordInspectorProtocolFailure(evidence, stage, error); throw error; }
+    }, { message: 'Electron inspector command failed' });
+    socket.reply({ id: request.id + 1, error: { code: -32000, message: 'Internal error' } });
+    assert.equal(inspector.pending.size, 1);
+    socket.reply({ id: request.id, method: 'NEVER_RECORD_RESPONSE_METHOD', error: { code: -32000, message: 'Promise was collected', data: { token: 'NEVER_RECORD_DATA' } } });
+    await rejected; assert.equal(inspector.pending.size, 0);
+    const path = `${stage}-inspector-protocol-error.json`, raw = await readFile(join(root, path)), observation = JSON.parse(raw);
+    assert.equal(observation.stage, stage); assert.equal(observation.method, 'Runtime.evaluate');
+    assert.equal(observation.operation, stage === 'final' ? 'window-state' : 'packaged-action');
+    assert.deepEqual(observation.error, { code: -32000, message: 'Promise was collected', data: { type: 'object', omitted: true } });
+    assert.ok(!raw.includes('NEVER_RECORD')); assert.ok(raw.length < 1024);
+    const item = report.evidence.find(item => item.path === path); assert.deepEqual(identity(raw), { size: item.size, sha256: item.sha256 });
+  }
+});
+
+test('inspector success, JavaScript exceptions and foreign errors retain existing failure semantics', async () => {
+  const socket = new SyntheticInspectorSocket(), inspector = new Inspector(socket);
+  try {
+    const evaluation = inspector.evaluate('synthetic-success');
+    socket.reply({ id: 1, result: { result: { value: { ready: true } } } });
+    assert.deepEqual(await evaluation, { ready: true });
+    const exception = inspector.evaluate('synthetic-exception');
+    socket.reply({ id: 2, result: { exceptionDetails: { exception: { description: 'Synthetic packaged failure' } } } });
+    await assert.rejects(exception, /Packaged Electron evaluation failed: Synthetic packaged failure/);
+    let writes = 0; const evidence = async () => { writes++; };
+    for (const error of [new Error('Synthetic packaged failure'), { inspectorProtocol: { token: 'NEVER_RECORD_FOREIGN' } }])
+      assert.equal(await recordInspectorProtocolFailure(evidence, 'final', error), false);
+    assert.equal(writes, 0);
+  } finally { inspector.close(); }
+});
+
+test('startup and welcome keep their last observations when an inspector protocol error aborts the phase', async () => {
+  const socket = new SyntheticInspectorSocket(), inspector = new Inspector(socket);
+  try {
+    const evaluation = inspector.evaluate('(packagedWindowState)()');
+    const caught = evaluation.catch(error => error);
+    socket.reply({ id: 1, error: { code: -32000, message: 'Cannot find context with specified id' } });
+    const failure = await caught, rejecting = { evaluate: async () => { throw failure; } };
+    let startup, welcome;
+    await assert.rejects(waitForUpgradeWindow(rejecting, {}, Date.now() + 1000, value => { startup = value; }), error => error === failure);
+    await assert.rejects(waitForUpgradeWelcome(rejecting, 1, Date.now() + 1000, value => { welcome = value; }), error => error === failure);
+    assert.deepEqual(startup, []); assert.deepEqual(welcome, { ready: false, branded: false, action: null });
+    let writes = 0;
+    assert.equal(await recordInspectorProtocolFailure(async () => { writes++; }, '../escape', failure), false);
+    assert.equal(writes, 0);
+  } finally { inspector.close(); }
+});
 
 test('real early inspector context without process remains a recorded bootstrap phase', () => {
   const observation = JSON.parse(JSON.stringify(vm.runInNewContext('(' + packagedWindowState.toString() + ')()', {})));

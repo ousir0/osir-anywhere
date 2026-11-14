@@ -26,7 +26,8 @@ export async function observeUpgradeGui(env, evidence, probe = nativeGuiProvenan
     try {
       gui = await probe(env);
     } catch (error) {
-      await evidence(`runner-gui-attempt-${attempt}.json`, bytes({ result: 'failed', failure: String(error.message), ...(error.commandResult ? { command: error.commandResult } : {}) }));
+      await evidence(`runner-gui-attempt-${attempt}.json`, bytes({ result: 'failed', failure: String(error.message), ...(error.commandResult ? { command: error.commandResult } : {}),
+        ...(error.probeObservation ? { probeObservation: error.probeObservation } : {}) }));
       if (platform !== 'win32' || attempt === 2 || error.message !== 'Native command timed out') throw error;
       continue;
     }
@@ -57,13 +58,54 @@ export async function provisionUpgrade(spec, options) {
   return runAcceptance(spec, options.output);
 }
 
-class Inspector {
+const INSPECTOR_TEXT_LIMIT = 240;
+const inspectorProtocolFailures = new WeakMap();
+// Protocol text is untrusted: regex-only redaction can leak short credentials
+// or serialized objects. Retain only fixed diagnostic phrases, never payloads.
+const INSPECTOR_SAFE_TEXT = new Set([
+  'Internal error', 'Invalid parameters', 'Invalid request', 'Method not found', 'Parse error', 'Server error',
+  'Cannot find context with specified id', 'Execution context was destroyed.', 'Cannot find default execution context',
+  'Promise was collected', 'Object reference chain is too long', "Object couldn't be returned by value",
+  'Inspected target navigated or closed', 'Inspected target has been closed',
+]);
+
+function safeInspectorText(value, limit = INSPECTOR_TEXT_LIMIT) {
+  if (typeof value !== 'string') return { type: value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value, omitted: true };
+  return value.length <= limit && INSPECTOR_SAFE_TEXT.has(value) ? value : { type: 'string', omitted: true, length: value.length };
+}
+
+export function sanitizeInspectorProtocolError(method, operation, error) {
+  const safeMethod = method === 'Runtime.evaluate' ? method : '[invalid-method]';
+  const safeError = error && typeof error === 'object' && !Array.isArray(error) ? error : {};
+  // JSON.parse supplies plain values. Do not traverse/serialize arbitrary data
+  // or invoke getters/toJSON even when called directly by a synthetic control.
+  const field = key => Object.getOwnPropertyDescriptor(safeError, key)?.value;
+  const code = field('code');
+  const result = { schemaVersion: 1, kind: 'inspector-protocol-error', method: safeMethod,
+    operation: ['window-state', 'renderer-welcome', 'screenshot', 'graceful-quit', 'packaged-action'].includes(operation) ? operation : '[invalid-operation]',
+    error: { code: Number.isInteger(code) && code >= -32768 && code <= -32000 ? code : { omitted: true }, message: safeInspectorText(field('message')) } };
+  if (Object.hasOwn(safeError, 'data')) result.error.data = safeInspectorText(field('data'), 160);
+  return result;
+}
+
+export async function recordInspectorProtocolFailure(evidence, stage, error) {
+  const diagnostic = inspectorProtocolFailures.get(error);
+  if (!['baseline', 'final', 'discovery'].includes(stage) || !diagnostic) return false;
+  await evidence(`${stage}-inspector-protocol-error.json`, bytes({ stage, ...diagnostic }));
+  return true;
+}
+
+export class Inspector {
   constructor(socket) {
     this.socket = socket; this.id = 0; this.pending = new Map();
     socket.addEventListener('message', event => {
       const message = JSON.parse(event.data), pending = this.pending.get(message.id); if (!pending) return;
       clearTimeout(pending.timer); this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error('Electron inspector command failed')); else pending.resolve(message.result);
+      if (message.error) {
+        const failure = new Error('Electron inspector command failed');
+        inspectorProtocolFailures.set(failure, sanitizeInspectorProtocolError(pending.method, pending.label, message.error));
+        pending.reject(failure);
+      } else pending.resolve(message.result);
     });
     socket.addEventListener('close', () => this.close());
   }
@@ -81,7 +123,7 @@ class Inspector {
     const id = ++this.id;
     const result = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Inspector evaluation timed out: ' + label)); }, 20000);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method: 'Runtime.evaluate', label });
       this.socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
     });
     check(!result.exceptionDetails, `Packaged Electron evaluation failed: ${result.exceptionDetails?.exception?.description?.slice(0, 400) ?? ''}`);
@@ -303,6 +345,7 @@ export class UpgradeAdapter extends NativeAdapter {
       await this.evidence(`${label}-window.png`, image); await this.evidence(`${label}-window.json`, bytes(state));
       const result = await action(inspector, state, window); completed = true; return result;
     } catch (failure) {
+      await recordInspectorProtocolFailure(this.evidence, label, failure);
       // Preserve a native stack sample before owned-only cleanup. No timeout
       // is promoted to readiness; these diagnostics cannot satisfy any gate.
       if (process.platform === 'darwin' && child.exitCode === null && child.signalCode === null) {

@@ -195,7 +195,7 @@ async function executableArches(path) {
 }
 
 /** No shell interpolation. Every subprocess has a bounded lifetime/output. */
-export async function command(executable, args, { env, cwd, timeout = 60000, input } = {}) {
+export async function command(executable, args, { env, cwd, timeout = 60000, input, onSpawn } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { env, cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let stdout = '', stderr = '', failure, cleanup;
@@ -205,6 +205,9 @@ export async function command(executable, args, { env, cwd, timeout = 60000, inp
       cleanup = stopOwned(child).catch(() => { child.kill('SIGKILL'); });
     };
     const timer = setTimeout(() => abort('Native command timed out'), timeout);
+    if (onSpawn) child.once('spawn', () => {
+      try { onSpawn({ pid: child.pid }); } catch { abort('Native command spawn observation failed'); }
+    });
     child.on('error', error => { clearTimeout(timer); reject(error); });
     for (const [name, stream] of [['stdout', child.stdout], ['stderr', child.stderr]]) stream.on('data', chunk => {
       if (failure) return;
