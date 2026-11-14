@@ -12,6 +12,8 @@ type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 type DesktopDeviceServiceOptions = {
   requireOwnership?: () => Promise<void>;
+  /** Backend serializes only local activations with stop, never cloud POSTs. */
+  activate?: (method: "start" | "restart", signal?: AbortSignal) => Promise<unknown>;
   binding: DesktopBindingStore;
   connector: ConnectorSupervisor;
   fetcher: Fetcher;
@@ -36,6 +38,7 @@ class ConnectorApiError extends Error {
 }
 
 export class DesktopDeviceService {
+  private connection: Promise<PublicLocalDesktopBinding> | null = null;
   constructor(private readonly options: DesktopDeviceServiceOptions) {}
 
   getLocalBinding(): PublicLocalDesktopBinding | null {
@@ -48,10 +51,16 @@ export class DesktopDeviceService {
     return this.requirePublicBinding();
   }
 
-  async createAndConnect(
+  createAndConnect(input: DesktopDeviceProvisionInput, signal?: AbortSignal): Promise<PublicLocalDesktopBinding> {
+    return this.connect(() => this.create(input, signal), signal);
+  }
+
+  private async create(
     input: DesktopDeviceProvisionInput,
+    signal?: AbortSignal,
   ): Promise<PublicLocalDesktopBinding> {
-    await this.options.requireOwnership?.();
+    await awaitConnectionOperation(Promise.resolve(this.options.requireOwnership?.()), signal);
+    assertConnectionLive(signal);
     const userId = requireUserId(input?.userId);
     const serverUrl = this.resolveServerUrl(input?.serverUrl);
     const existing = this.options.binding.get();
@@ -69,17 +78,19 @@ export class DesktopDeviceService {
         !state.authFailed &&
         !state.running
       ) {
-        await this.options.connector.start();
+        await this.activate("start", signal);
       }
       return this.requirePublicBinding();
     }
 
-    return this.provisionAndConnect({ ...input, userId, serverUrl });
+    return this.provisionAndConnect({ ...input, userId, serverUrl }, signal);
   }
 
   private async provisionAndConnect(
     input: DesktopDeviceProvisionInput & { serverUrl: string },
+    signal?: AbortSignal,
   ): Promise<PublicLocalDesktopBinding> {
+    assertConnectionLive(signal);
     const { userId, serverUrl } = input;
     const previousBinding = this.options.binding.get();
     const previousConfig = this.options.connector.loadPrivateConfig();
@@ -91,20 +102,24 @@ export class DesktopDeviceService {
       // replacement device is transactional: a failed POST can resume the old
       // local Connector instead of stranding its binding without a token.
       await this.options.connector.stop();
+      assertConnectionLive(signal);
     }
 
     try {
-      await this.options.connector.preflightProvisioning();
+      await awaitConnectionOperation(this.options.connector.preflightProvisioning(), signal);
     } catch (error) {
-      await this.resumePreviousConnector(resumePrevious);
+      await this.resumePreviousConnector(resumePrevious, signal);
       throw error;
     }
 
-    const name = input?.name?.trim() || await systemDeviceName();
+    const name = input?.name?.trim() || await awaitConnectionOperation(systemDeviceName(), signal);
     let credential: ConnectorCredentialResponse;
     let reusedConnectorId: string | undefined;
     try {
-      reusedConnectorId = await this.findLocalConnector(serverUrl, userId, input?.userToken);
+      reusedConnectorId = await awaitConnectionOperation(this.findLocalConnector(serverUrl, userId, input?.userToken), signal);
+      assertConnectionLive(signal);
+      // Once sent, a POST can commit despite a disconnected loopback/IPC client.
+      // Drain its result for credential recovery; only the caller races abort.
       credential = await this.requestCredential(
         serverUrl,
         reusedConnectorId ? `/connectors/${encodeURIComponent(reusedConnectorId)}/revoke` : "/connectors",
@@ -115,7 +130,7 @@ export class DesktopDeviceService {
         throw new Error("The server returned credentials for a different Connector.");
       }
     } catch (error) {
-      await this.resumePreviousConnector(resumePrevious);
+      await this.resumePreviousConnector(resumePrevious, signal);
       throw error;
     }
     const nextBinding = {
@@ -123,7 +138,7 @@ export class DesktopDeviceService {
       serverUrl,
       name: credential.connector.name?.trim() || name,
       ownerUserId: userId,
-      manualDisconnected: false,
+      manualDisconnected: Boolean(signal?.aborted),
     };
     try {
       // Connector records the ID when it accepts startup; preserve credentials
@@ -135,7 +150,7 @@ export class DesktopDeviceService {
         credential.connector.id,
         input?.userToken,
       );
-      await this.resumePreviousConnector(resumePrevious);
+      await this.resumePreviousConnector(resumePrevious, signal);
       throw combinedProvisioningError(error, rollbackError);
     }
     try {
@@ -154,6 +169,7 @@ export class DesktopDeviceService {
       );
       if (recoveredNewCredential) {
         this.options.connector.bindingChanged();
+        this.preserveCancelledBinding(signal);
         throw error;
       }
       if (previousBinding) this.options.binding.save(previousBinding);
@@ -164,18 +180,25 @@ export class DesktopDeviceService {
         credential.connector.id,
         input?.userToken,
       );
-      await this.resumePreviousConnector(resumePrevious);
+      await this.resumePreviousConnector(resumePrevious, signal);
       throw combinedProvisioningError(error, rollbackError);
     }
     this.options.connector.bindingChanged();
-    await this.options.connector.start();
+    this.preserveCancelledBinding(signal);
+    await this.activate("start", signal);
     return this.requirePublicBinding();
   }
 
-  async reconnectAndConnect(
+  reconnectAndConnect(input: DesktopDeviceReconnectInput, signal?: AbortSignal): Promise<PublicLocalDesktopBinding> {
+    return this.connect(() => this.reconnect(input, signal), signal);
+  }
+
+  private async reconnect(
     input: DesktopDeviceReconnectInput,
+    signal?: AbortSignal,
   ): Promise<PublicLocalDesktopBinding> {
-    await this.options.requireOwnership?.();
+    await awaitConnectionOperation(Promise.resolve(this.options.requireOwnership?.()), signal);
+    assertConnectionLive(signal);
     const binding = this.requireBinding();
     this.assertOwner(input, binding.ownerUserId);
     if (input.connectorId && input.connectorId !== binding.connectorId) {
@@ -189,7 +212,7 @@ export class DesktopDeviceService {
       // authenticate with the saved credential when the connection restarts.
       this.options.binding.save({ ...binding, serverUrl, manualDisconnected: false });
       this.options.connector.bindingChanged();
-      await this.options.connector.restart();
+      await this.activate("restart", signal);
       return this.requirePublicBinding();
     }
     let credential: ConnectorCredentialResponse;
@@ -200,6 +223,7 @@ export class DesktopDeviceService {
         input.userToken,
       );
     } catch (error) {
+      assertConnectionLive(signal);
       if (!(error instanceof ConnectorApiError) || error.status !== 404) throw error;
       // A deleted device needs pairing again. Reuse first-login provisioning
       // without letting createAndConnect return the stale local binding.
@@ -208,7 +232,7 @@ export class DesktopDeviceService {
         userToken: input.userToken,
         serverUrl,
         name: binding.name,
-      });
+      }, signal);
     }
     if (credential.connector.id !== binding.connectorId) {
       throw new Error("The server returned credentials for a different Connector.");
@@ -222,10 +246,11 @@ export class DesktopDeviceService {
       ...binding,
       serverUrl,
       name: credential.connector.name?.trim() || binding.name,
-      manualDisconnected: false,
+      manualDisconnected: Boolean(signal?.aborted),
     });
     this.options.connector.bindingChanged();
-    await this.options.connector.restart();
+    this.preserveCancelledBinding(signal);
+    await this.activate("restart", signal);
     return this.requirePublicBinding();
   }
 
@@ -344,14 +369,41 @@ export class DesktopDeviceService {
     }
   }
 
-  private async resumePreviousConnector(shouldResume: boolean): Promise<void> {
-    if (!shouldResume) return;
+  private async resumePreviousConnector(shouldResume: boolean, signal?: AbortSignal): Promise<void> {
+    if (!shouldResume || signal?.aborted) return;
     try {
-      await this.options.connector.start();
+      await this.activate("start", signal);
     } catch {
       // Preserve the original provisioning error. The old credential and
       // binding remain intact and can still be started explicitly later.
     }
+  }
+
+  private connect(operation: () => Promise<PublicLocalDesktopBinding>, signal?: AbortSignal): Promise<PublicLocalDesktopBinding> {
+    if (signal?.aborted) return Promise.reject(new Error("Desktop connection cancelled."));
+    // Keep this fence until an already-issued POST has settled, even if the
+    // caller has cancelled. A second explicit click must not create twice.
+    if (this.connection) return Promise.reject(new Error("A Desktop connection is still settling. Try reconnecting after it finishes."));
+    const pending = Promise.resolve().then(() => { assertConnectionLive(signal); return operation(); });
+    this.connection = pending;
+    const clear = () => { if (this.connection === pending) this.connection = null; };
+    void pending.then(clear, clear);
+    return awaitConnectionOperation(pending, signal);
+  }
+
+  private preserveCancelledBinding(signal?: AbortSignal): void {
+    if (!signal?.aborted) return;
+    const binding = this.options.binding.get();
+    if (binding) this.options.binding.save({ ...binding, manualDisconnected: true });
+    this.options.connector.bindingChanged();
+    assertConnectionLive(signal);
+  }
+
+  private async activate(method: "start" | "restart", signal?: AbortSignal): Promise<void> {
+    assertConnectionLive(signal);
+    if (this.options.activate) await this.options.activate(method, signal);
+    else await this.options.connector[method]();
+    this.preserveCancelledBinding(signal);
   }
 
   private resolveServerUrl(input: string | undefined): string {
@@ -397,6 +449,24 @@ export class DesktopDeviceService {
     if (!binding) throw new Error("This Desktop has not created its local Connector yet.");
     return binding;
   }
+}
+
+function assertConnectionLive(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Desktop connection cancelled.");
+}
+
+/** Local cancellation only: Main's netFetch IPC does not carry AbortSignals.
+ * The underlying work still has a rejection handler and may drain a committed
+ * cloud credential; cancellation never waits for that work to finish.
+ */
+export function awaitConnectionOperation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new Error("Desktop connection cancelled."));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    void operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function parseConnectorList(value: unknown): Array<{ id: string; userId: string }> {

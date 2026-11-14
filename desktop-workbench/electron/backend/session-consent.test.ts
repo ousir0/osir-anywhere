@@ -10,7 +10,7 @@ import type { OwnershipState } from "../local-runtime";
 import * as shellEnvironment from "../shell-environment";
 import { BACKEND_TOKEN_HEADER, type BackendInit } from "./protocol";
 import { BackendServer } from "./server";
-import { BackendState } from "./state";
+import { BackendState, type BackendFetcher } from "./state";
 
 const credential = { serverUrl: "https://server.example.test", connectorId: "saved-device", connectorToken: "test-credential" };
 const account = { userId: "test-user", userToken: "test-session" };
@@ -21,6 +21,7 @@ function fixture(t: TestContext, options: {
   saved?: boolean;
   missingLauncher?: boolean;
   scopedVerificationOnly?: boolean;
+  fetcher?: BackendFetcher;
 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-idle-consent-"));
   const init: BackendInit = {
@@ -95,8 +96,9 @@ process.stdin.on('end', () => process.exit(0));
     assert.equal(args.includes("rpc"), true);
     return spawn(process.execPath, [script], spawnOptions);
   });
-  const state = new BackendState(init, async (_url, request) => {
+  const state = new BackendState(init, async (url, request) => {
     calls.push(`http:${request?.method}`);
+    if (options.fetcher) return options.fetcher(url, request);
     return Response.json(request?.method === "GET"
       ? { connectors: [] }
       : { connector: { id: "new-device", name: "Test Desktop" }, connectorToken: "new-test-credential" });
@@ -109,11 +111,147 @@ process.stdin.on('end', () => process.exit(0));
     else process.env.WORKBENCH_CONNECTOR_CLI = directCli;
     fs.rmSync(root, { recursive: true, force: true });
   });
-  return { state, init, root, calls, ownership,
+  return { state, init, root, calls, ownership, control: channel.control,
     permitSidecar: () => { allowSpawn = true; },
     setConflict: (value: boolean) => { conflict = value; },
   };
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+for (const action of ["createAndConnect", "reconnectAndConnect"] as const) {
+  test(`${action}: stop returns before cloud provisioning settles and its late success never starts`, { timeout: 15_000 }, async t => {
+    const posted = deferred<void>(), response = deferred<Response>();
+    const f = fixture(t, { saved: action === "reconnectAndConnect", fetcher: async (_url, request) => {
+      // Like Main netFetch IPC: deliberately ignore any AbortSignal.
+      if (request?.method === "GET") return Response.json({ connectors: [] });
+      posted.resolve(); return response.promise;
+    } });
+    if (action === "reconnectAndConnect") fs.unlinkSync(f.init.configPath);
+    f.permitSidecar();
+    const pending = f.state[action]({ ...account, name: "Test Desktop" });
+    const rejected = assert.rejects(pending, /cancelled/);
+    await posted.promise;
+    // Main's logout calls this exact loopback route; no second stop is needed.
+    const server = new BackendServer(f.state), { port, token } = await server.start();
+    t.after(() => server.close());
+    const stopResponse = await fetch(`http://127.0.0.1:${port}/stop`, {
+      method: "POST", headers: { [BACKEND_TOKEN_HEADER]: token },
+    });
+    assert.equal(stopResponse.status, 200);
+    const stopped = await stopResponse.json() as { running: boolean };
+    await rejected;
+    assert.equal(stopped.running, false);
+    await assert.rejects(f.state.startConnector(), /Create or reconnect/);
+    await assert.rejects(f.state[action](account), /still settling/, "uncertain cloud write prevents duplicate create/rotation");
+    response.resolve(Response.json({ connector: { id: action === "reconnectAndConnect" ? credential.connectorId : "new-device", name: "Test Desktop" }, connectorToken: "late-credential" }));
+    await nextTurn();
+    assert.equal(f.calls.some(call => /rpc:(start|restart)/.test(call)), false);
+    assert.equal((await f.state.getConnectorState()).running, false);
+    assert.equal(f.state.getLocalBinding()?.manualDisconnected, true);
+    assert.equal(f.state.getLocalBinding()?.hasCredential, true, "keep the one-time credential for explicit recovery");
+    const requests = f.calls.filter(call => call.startsWith("http:"));
+    await f.state.reconnectAndConnect(account);
+    assert.deepEqual(f.calls.filter(call => call.startsWith("http:")), requests, "explicit recovery reuses the saved device without another cloud POST");
+    assert.equal((await f.state.getConnectorState()).running, true);
+  });
+}
+
+test("stop during ownership acquisition cancels promptly and a late owner cannot provision", { timeout: 15_000 }, async t => {
+  const f = fixture(t);
+  const acquired = deferred<void>(), release = deferred<void>();
+  const original = f.control.acquireOwnership.bind(f.control);
+  t.mock.method(f.control, "acquireOwnership", async () => { acquired.resolve(); await release.promise; return original(); });
+  f.permitSidecar();
+  const rejected = assert.rejects(f.state.createAndConnect(account), /cancelled/);
+  await acquired.promise;
+  await f.state.stopConnector();
+  await rejected;
+  release.resolve(); await nextTurn();
+  assert.equal(f.calls.some(call => /http:|rpc:(start|restart)/.test(call)), false);
+  assert.equal((await f.state.getConnectorState()).running, false);
+  await assert.rejects(f.state.restartConnector(), /Create or reconnect/);
+});
+
+test("cancellation during the device list releases the caller and never sends a later create POST", { timeout: 15_000 }, async t => {
+  const requested = deferred<void>(), response = deferred<Response>();
+  const f = fixture(t, { fetcher: async () => { requested.resolve(); return response.promise; } });
+  f.permitSidecar();
+  const signal = new AbortController();
+  const rejected = assert.rejects(f.state.createAndConnect({ ...account, name: "Test Desktop" }, signal.signal), /cancelled/);
+  await requested.promise; signal.abort(); await rejected;
+  await f.state.stopConnector();
+  response.resolve(Response.json({ connectors: [] })); await nextTurn();
+  assert.deepEqual(f.calls.filter(call => call.startsWith("http:")), ["http:GET"]);
+  assert.equal(f.calls.some(call => /rpc:(start|restart)/.test(call)), false);
+});
+
+for (const method of ["start", "restart"] as const) test(`stop fences an already-issued local ${method}, then remains stopped after its late completion`, { timeout: 15_000 }, async t => {
+  const f = fixture(t, { saved: true });
+  const started = deferred<void>(), release = deferred<void>();
+  const original = f.control[method].bind(f.control);
+  t.mock.method(f.control, method, async (config: unknown, options?: { timeoutMs?: number }) => {
+    started.resolve(); await release.promise; return original(config, options);
+  });
+  f.permitSidecar();
+  const rejected = assert.rejects(method === "start" ? f.state.createAndConnect(account) : f.state.reconnectAndConnect(account), /cancelled/);
+  await started.promise;
+  let stopReturned = false;
+  const stop = f.state.stopConnector().then(value => { stopReturned = true; return value; });
+  await rejected; await nextTurn();
+  assert.equal(stopReturned, false, "stop must fence the already-issued activation, but the cancelled caller is released");
+  release.resolve();
+  assert.equal((await stop).running, false);
+  await nextTurn();
+  assert.equal((await f.state.getConnectorState()).running, false);
+  assert.deepEqual(f.calls.filter(call => /rpc:(start|stop|restart)/.test(call)), [`rpc:${method}`, "rpc:stop"]);
+});
+
+test("cancelled reconnect 404 cannot fall through to replacement provisioning", { timeout: 15_000 }, async t => {
+  const posted = deferred<void>(), response = deferred<Response>();
+  const f = fixture(t, { saved: true, fetcher: async () => { posted.resolve(); return response.promise; } });
+  fs.unlinkSync(f.init.configPath); f.permitSidecar();
+  const rejected = assert.rejects(f.state.reconnectAndConnect(account), /cancelled/);
+  await posted.promise; await f.state.stopConnector(); await rejected;
+  response.resolve(Response.json({ detail: "deleted" }, { status: 404 })); await nextTurn();
+  assert.deepEqual(f.calls.filter(call => call.startsWith("http:")), ["http:POST"]);
+  assert.equal(f.calls.some(call => /rpc:(start|restart)/.test(call)), false);
+});
+
+test("aborting a real loopback POST cancels Backend consent despite an uncancellable Main netFetch", { timeout: 15_000 }, async t => {
+  const posted = deferred<void>(), response = deferred<Response>(), stopped = deferred<void>();
+  const f = fixture(t, { fetcher: async (_url, request) => {
+    if (request?.method === "GET") return Response.json({ connectors: [] });
+    posted.resolve(); return response.promise;
+  } });
+  const originalStop = f.control.stop.bind(f.control);
+  t.mock.method(f.control, "stop", async (...args: Parameters<typeof originalStop>) => {
+    const result = await originalStop(...args); stopped.resolve(); return result;
+  });
+  f.permitSidecar();
+  const server = new BackendServer(f.state), { port, token } = await server.start();
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${port}`, headers = { [BACKEND_TOKEN_HEADER]: token, "content-type": "application/json" };
+  const controller = new AbortController();
+  const rejected = assert.rejects(fetch(`${base}/device/create`, { method: "POST", headers,
+    body: JSON.stringify({ ...account, name: "Test Desktop" }), signal: controller.signal }), { name: "AbortError" });
+  await posted.promise; controller.abort(); await rejected; await stopped.promise;
+  assert.equal((await f.state.getConnectorState()).running, false);
+  await assert.rejects(f.state.startConnector(), /Create or reconnect/);
+  response.resolve(Response.json({ connector: { id: "new-device" }, connectorToken: "late-credential" })); await nextTurn();
+  assert.equal(f.calls.some(call => /rpc:(start|restart)/.test(call)), false);
+  assert.equal(f.state.getLocalBinding()?.hasCredential, true);
+  assert.equal(f.state.getLocalBinding()?.manualDisconnected, true);
+  const recovered = await fetch(`${base}/device/reconnect`, { method: "POST", headers, body: JSON.stringify(account) });
+  assert.equal(recovered.status, 200); await recovered.json(); await nextTurn();
+  assert.equal((await f.state.getConnectorState()).running, true, "a normal response close must not cancel a successful connection");
+  assert.deepEqual(f.calls.filter(call => call.startsWith("http:")), ["http:GET", "http:POST"]);
+});
 
 for (const saved of [false, true]) {
   test(`real explicit Backend initialization and metadata stay idle (${saved ? "saved credentials" : "fresh install"})`, async t => {

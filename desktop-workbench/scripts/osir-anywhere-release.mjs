@@ -3,12 +3,12 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath } from 'no
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { BASE, CURRENT, SHA, TARGETS, bytes, canonical, check, cli, digest, fingerprint, immutableFile, inspect, isMain, json, manifest, matches, privateFile, safe, separate, verifyEnvelope, within } from './osir-anywhere-release-common.mjs';
+import { BASE, CURRENT, SHA, TARGETS, bytes, canonical, check, cli, digest, fingerprint, immutableFile, inspect, isMain, json, manifest, matches, privateFile, releaseRevision, safe, separate, verifyEnvelope, within } from './osir-anywhere-release-common.mjs';
 import { RainStorage, storageConfig } from './osir-anywhere-storage.mjs';
 import { systemSignature } from './osir-anywhere-system-signature.mjs';
 
 export const CONTRACT = { schemaVersion: 1, productId: 'osir-anywhere', channel: 'stable', manifestUrl: CURRENT, commands: ['plan', 'prepare', 'upload', 'publish', 'restore'] };
-const TOOL_FILES = ['osir-anywhere-release.mjs', 'osir-anywhere-release-common.mjs', 'osir-anywhere-storage.mjs', 'osir-anywhere-build.mjs', 'osir-anywhere-source.mjs', 'osir-anywhere-system-signature.mjs', 'dist-desktop.mjs', 'release-credentials.mjs', 'desktop-build-config.mjs', 'desktop-package-config.mjs'];
+const TOOL_FILES = ['osir-anywhere-release.mjs', 'osir-anywhere-release-common.mjs', 'osir-anywhere-storage.mjs', 'osir-anywhere-build.mjs', 'osir-anywhere-source.mjs', 'osir-anywhere-system-signature.mjs', 'dist-desktop.mjs', 'release-credentials.mjs', 'desktop-build-config.mjs', 'desktop-package-config.mjs', 'write-build-info.mjs'];
 export async function toolsFingerprint() {
   return fingerprint(await Promise.all(TOOL_FILES.map(async name => ({ name, sha256: digest(await readFile(new URL(name, import.meta.url))) }))));
 }
@@ -34,11 +34,13 @@ export function nativeAcceptance(report, build) {
   check(Array.isArray(report.evidence) && report.evidence.length > 0 && report.evidence.every(e => typeof e.path === 'string' && SHA.test(e.sha256) && Number.isSafeInteger(e.size) && e.size > 0), 'Acceptance must preserve raw smoke evidence');
 }
 export async function releasePlan(spec) {
+  const revision = releaseRevision(spec.releaseRevision);
   check(spec.schemaVersion === 1 && spec.channel === 'stable' && SHA.test(spec.sourceSha256) && /^[a-f0-9]{40}$/.test(spec.upstreamGitHead), 'Invalid release source contract');
   safe(spec.releaseId); safe(spec.version);
   check(typeof spec.publishedAt === 'string' && new Date(spec.publishedAt).toISOString() === spec.publishedAt, 'publishedAt must be fixed UTC ISO timestamp');
   check(spec.expectedCurrent && ((spec.expectedCurrent.releaseId === null && spec.expectedCurrent.sha256 === null) ||
     (typeof spec.expectedCurrent.releaseId === 'string' && safe(spec.expectedCurrent.releaseId) && SHA.test(spec.expectedCurrent.sha256))), 'Expected current requires reviewed release ID AND exact envelope SHA-256, or both null');
+  check(spec.expectedCurrent.releaseId !== spec.releaseId, 'A release requires a new immutable releaseId, including same-version revisions');
   separate(spec.stagingDirectory, spec.backupDirectory, spec.restoreDirectory);
   check(isAbsolute(spec.publicKeyPath), 'Public key path must be absolute');
   const pub = await readFile(spec.publicKeyPath);
@@ -53,6 +55,7 @@ export async function releasePlan(spec) {
     check(receipt.schemaVersion === 1 && p?.sourceSha256 === spec.sourceSha256 && p.upstreamGitHead === spec.upstreamGitHead && p.releaseId === spec.releaseId && p.version === spec.version &&
       ['darwin-universal', 'win32-x64', 'win32-arm64'].includes(p.target) && SHA.test(p.configSha256) && SHA.test(p.dependencies?.lockSha256) &&
       SHA.test(p.dependencies?.installStateSha256) && /^[a-f0-9]{40}$/.test(p.checkoutHead), 'Build source/config/dependency provenance mismatch');
+    check(releaseRevision(p.releaseRevision) === revision, 'Build releaseRevision provenance mismatch');
     check(!targets.has(p.target), 'Duplicate build target'); targets.add(p.target);
     configs.add(p.configSha256);
     locks.add(p.dependencies.lockSha256);
@@ -99,6 +102,7 @@ export async function releasePlan(spec) {
   check(locks.size === 1, 'Platforms were built with different dependency locks');
   artifacts.sort((a, b) => a.filename.localeCompare(b.filename));
   const payload = { schemaVersion: 1, productId: 'osir-anywhere', channel: 'stable', releaseId: spec.releaseId, version: spec.version, publishedAt: spec.publishedAt,
+    ...(spec.releaseRevision !== undefined ? { revision } : {}),
     ...(spec.minimumClientVersion ? { minimumClientVersion: safe(spec.minimumClientVersion) } : {}),
     ...(spec.minimumServerVersion ? { minimumServerVersion: safe(spec.minimumServerVersion) } : {}), artifacts };
   return { ...CONTRACT, releaseId: spec.releaseId, toolsSha256: await toolsFingerprint(), specSha256: fingerprint(spec), publicKeySha256: digest(pub), payload, provenance };

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { ConnectorLogStore } from "../log-store";
 import { ConnectorSupervisor } from "../connector-supervisor";
 import { DesktopBindingStore } from "../desktop-binding";
-import { DesktopDeviceService } from "../desktop-device-service";
+import { awaitConnectionOperation, DesktopDeviceService } from "../desktop-device-service";
 import { DesktopSettingsStore } from "../desktop-settings";
 import { desktopInstallation, MachineStateStore } from "../machine-state";
 import { localRuntimePath } from "../local-runtime";
@@ -57,6 +57,11 @@ export class BackendState {
   private initialized = false;
   /** Only device create/reconnect grants permission to start the remote runtime. */
   private explicitConnectionRequested = false;
+  private connectionEpoch = new AbortController();
+  /** Only local runtime mutations join this queue. Network provisioning never
+   * holds up stop. Supervisor RPCs already have their own finite deadlines.
+   */
+  private mutationTail: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly init: BackendInit,
@@ -101,6 +106,7 @@ export class BackendState {
     });
     this.devices = new DesktopDeviceService({
       requireOwnership: () => this.requireOwnership(),
+      activate: (method, signal) => this.activateConnector(method, signal),
       binding: this.binding,
       connector: this.connector,
       fetcher,
@@ -186,7 +192,8 @@ export class BackendState {
   /** Clearing an environment does not grant permission to reconnect it. */
   async resetConnectorEnvironment(): Promise<ConnectorState> {
     if (this.closed) throw new Error("Desktop backend is shutting down.");
-    const state = await this.connector.resetEnvironment();
+    this.cancelConnections();
+    const state = await this.mutateConnector(() => this.connector.resetEnvironment());
     if (this.init.requireExplicitConnection) {
       this.explicitConnectionRequested = false;
       this.ownership = { status: "idle" };
@@ -252,23 +259,34 @@ export class BackendState {
 
   async saveConfig(patch: ConnectorConfigPatch): Promise<ConnectorState> {
     this.assertConnectionRequested();
-    return this.connector.saveConfig(patch ?? {});
+    const signal = this.connectionEpoch.signal;
+    return awaitConnectionOperation(this.mutateConnector(() => {
+      this.assertLiveConnection(signal);
+      return this.connector.saveConfig(patch ?? {});
+    }), signal);
   }
 
-  async startConnector(): Promise<ConnectorState> {
+  async startConnector(requestSignal?: AbortSignal): Promise<ConnectorState> {
     this.assertConnectionRequested();
-    await this.requireOwnership();
-    return this.connector.start();
+    return this.connectionOperation(async signal => {
+      await awaitConnectionOperation(this.requireOwnership(), signal);
+      return this.activateConnector("start", signal);
+    }, requestSignal);
   }
 
   stopConnector(): Promise<ConnectorState> {
-    return this.connector.stop();
+    // Invalidate synchronously, before awaiting anything. Older provisioning
+    // cannot start even when its cloud result arrives after this stop returns.
+    this.cancelConnections();
+    return this.mutateConnector(() => this.connector.stop());
   }
 
-  async restartConnector(): Promise<ConnectorState> {
+  async restartConnector(requestSignal?: AbortSignal): Promise<ConnectorState> {
     this.assertConnectionRequested();
-    await this.requireOwnership();
-    return this.connector.restart();
+    return this.connectionOperation(async signal => {
+      await awaitConnectionOperation(this.requireOwnership(), signal);
+      return this.activateConnector("restart", signal);
+    }, requestSignal);
   }
 
   readLogs(query: ConnectorLogQuery): Promise<ConnectorLogPage> {
@@ -294,16 +312,20 @@ export class BackendState {
     return this.devices.getLocalBinding();
   }
 
-  createAndConnect(input: DesktopDeviceProvisionInput): Promise<PublicLocalDesktopBinding> {
+  createAndConnect(input: DesktopDeviceProvisionInput, requestSignal?: AbortSignal): Promise<PublicLocalDesktopBinding> {
     this.assertOrdinaryConnectionAllowed();
-    this.explicitConnectionRequested = true;
-    return this.devices.createAndConnect(input);
+    return this.connectionOperation(signal => {
+      this.explicitConnectionRequested = true;
+      return this.devices.createAndConnect(input, signal);
+    }, requestSignal);
   }
 
-  reconnectAndConnect(input: DesktopDeviceReconnectInput): Promise<PublicLocalDesktopBinding> {
+  reconnectAndConnect(input: DesktopDeviceReconnectInput, requestSignal?: AbortSignal): Promise<PublicLocalDesktopBinding> {
     this.assertOrdinaryConnectionAllowed();
-    this.explicitConnectionRequested = true;
-    return this.devices.reconnectAndConnect(input);
+    return this.connectionOperation(signal => {
+      this.explicitConnectionRequested = true;
+      return this.devices.reconnectAndConnect(input, signal);
+    }, requestSignal);
   }
 
   disconnectLocal(input: DesktopDeviceAuthInput): Promise<PublicLocalDesktopBinding> {
@@ -323,15 +345,56 @@ export class BackendState {
     if (this.init.scopedVerificationOnly) return;
     if (this.init.requireExplicitConnection) return;
     if (!this.settings.get().startConnectorOnLaunch) return;
-    const state = await this.connector.getState();
-    if (state.hasCredential && !state.manualDisconnected) await this.connector.start();
+    const signal = this.connectionEpoch.signal;
+    const state = await awaitConnectionOperation(this.connector.getState(), signal);
+    if (state.hasCredential && !state.manualDisconnected) await this.activateConnector("start", signal);
   }
 
   async shutdown(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.cancelConnections();
     this.logBatcher.dispose();
-    await this.connector.shutdown().catch(() => undefined);
+    await this.mutateConnector(() => this.connector.shutdown()).catch(() => undefined);
+  }
+
+  private cancelConnections(): void {
+    const previous = this.connectionEpoch;
+    this.connectionEpoch = new AbortController();
+    this.explicitConnectionRequested = false;
+    previous.abort();
+  }
+
+  private connectionOperation<T>(operation: (signal: AbortSignal) => Promise<T>, requestSignal?: AbortSignal): Promise<T> {
+    if (this.closed || requestSignal?.aborted) return Promise.reject(new Error("Desktop connection cancelled."));
+    const epoch = this.connectionEpoch;
+    const signal = requestSignal ? AbortSignal.any([epoch.signal, requestSignal]) : epoch.signal;
+    const abort = () => {
+      if (this.connectionEpoch !== epoch) return;
+      // The HTTP socket disappearing is a local cancellation event, even though
+      // the outbound Main netFetch may still deliver a committed credential.
+      void this.stopConnector().catch(() => this.reportStartupError("Could not stop the cancelled Desktop connection."));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    return awaitConnectionOperation(operation(signal), signal).finally(() => signal.removeEventListener("abort", abort));
+  }
+
+  private mutateConnector<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.mutationTail.then(operation);
+    this.mutationTail = pending.catch(() => undefined);
+    return pending;
+  }
+
+  private assertLiveConnection(signal?: AbortSignal): void {
+    if (this.closed || signal?.aborted) throw new Error("Desktop connection cancelled.");
+    this.assertConnectionRequested();
+  }
+
+  private activateConnector(method: "start" | "restart", signal?: AbortSignal): Promise<ConnectorState> {
+    return this.mutateConnector(() => {
+      this.assertLiveConnection(signal);
+      return this.connector[method]();
+    });
   }
 
   private reportStartupError(message: string): void {
@@ -373,7 +436,11 @@ export class BackendState {
   private applyConnectorSettings(previous: DesktopSettings): Promise<ConnectorState> {
     // Save launcher/mirror choices even if the environment does not exist yet.
     if (this.awaitingExplicitConnection()) return Promise.resolve(this.connector.bindingChanged());
-    return this.connector.applySettings(previous);
+    const signal = this.connectionEpoch.signal;
+    return this.mutateConnector(() => {
+      this.assertLiveConnection(signal);
+      return this.connector.applySettings(previous);
+    });
   }
 
   private acquireOwnership(): Promise<void> {

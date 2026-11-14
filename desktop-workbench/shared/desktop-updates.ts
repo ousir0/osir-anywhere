@@ -19,6 +19,8 @@ export type DesktopReleaseManifest = {
   channel: "stable";
   releaseId: string;
   version: string;
+  /** Signed build revision (0..65535). Omission denotes the legacy revision zero. */
+  revision?: number;
   publishedAt: string;
   /** OSIR Client compatibility metadata; this is not the Desktop version. */
   minimumClientVersion?: string;
@@ -27,6 +29,7 @@ export type DesktopReleaseManifest = {
 };
 
 export type DesktopUpdateState = {
+  /** State event counter, unrelated to the signed release revision. */
   revision: number;
   currentVersion: string;
   latestVersion: string | null;

@@ -25,6 +25,12 @@ import {
   type DesktopOAuthResult,
 } from "./desktop-oauth";
 import { DesktopSessionManager, DesktopSessionStore } from "./desktop-session";
+import { bundledPythonExecutable } from "./connector-python";
+import { OsirClientHandoffController } from "./osir-client-handoff";
+import { OsirClientHandoffTransport } from "./osir-client-handoff-transport";
+import { fetchHandoffTrust, verifyHandoffBundle } from "./osir-handoff-trust";
+import { bootstrapClientHandoff } from "./osir-handoff-bootstrap";
+import type { PublicLocalDesktopBinding } from "./connector-types";
 import { OsirScopedConnector } from "./osir-scoped-connector";
 import {
   desktopOnboardingFromArgv,
@@ -34,6 +40,7 @@ import {
 } from "./desktop-onboarding";
 import { DesktopUpdateService } from "./desktop-updates";
 import { RELEASE_MANIFEST_URL, readReleasePublicKey } from "./release-manifest";
+import { readPackagedRevision } from "./release-build-info";
 import { validateTitleBarColors } from "./title-bar";
 import type { BackendInit } from "./backend/protocol";
 import { DesktopBackendClient } from "./backend-client";
@@ -99,6 +106,8 @@ let startingDesktopOAuth = false;
 let desktopOAuthAttempt = 0;
 let desktopOAuthResult: DesktopOAuthResult | null = null;
 let desktopSessions: DesktopSessionManager | null = null;
+let clientHandoff: OsirClientHandoffController | null = null;
+const pendingClientFlows = new Set<string>();
 let scopedTestConnector: OsirScopedConnector | null = null;
 let projectConnector: OsirScopedConnector | null = null;
 const desktopOAuthFlow = new DesktopOAuthFlow({
@@ -280,13 +289,16 @@ function shouldProxyApiPath(pathname: string): boolean {
 }
 
 function registerStaticWebProtocol(): void {
-  protocol.handle(WEB_PROTOCOL, (request) => {
+  protocol.handle(WEB_PROTOCOL, async (request) => {
     const url = new URL(request.url);
     if (url.hostname !== WEB_HOST) return new Response("Not found", { status: 404 });
 
     const backendPath = DesktopBackendClient.proxyPath(url.pathname);
     if (backendPath) {
       if (!backend) return new Response("Desktop backend is not ready.", { status: 503 });
+      if (request.method !== "GET" && ["/device/create", "/device/reconnect", "/device/disconnect", "/device/revoke", "/environment/reset", "/start", "/restart", "/stop"].includes(backendPath)) {
+        await clientHandoff?.cancel();
+      }
       return backend.proxy(request, backendPath, url.search);
     }
 
@@ -723,6 +735,7 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workbench:auth:startOAuth", async (event, input?: { serverUrl?: string }): Promise<DesktopOAuthStartResult> => {
     assertTrustedRenderer(event);
+    await clientHandoff?.cancel();
     await requireLocalOwnership();
     if (startingDesktopOAuth) throw new Error("A sign-in request is already starting.");
     startingDesktopOAuth = true;
@@ -777,6 +790,7 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("workbench:auth:logout", async (event) => {
     assertTrustedRenderer(event);
+    await clientHandoff?.cancel();
     await projectConnector?.stop();
     await scopedTestConnector?.stop();
     desktopOAuthAttempt++;
@@ -858,6 +872,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("workbench:connector:factoryReset", async (event, input: DesktopFactoryResetInput) => {
     assertTrustedRenderer(event);
     const forceLocal = input?.forceLocal === true;
+    await clientHandoff?.cancel();
     const client = requireBackend();
     const binding = await client.request<{ connectorId: string } | null>("/device/binding");
     if (binding && !forceLocal) {
@@ -948,6 +963,101 @@ async function initializeDesktopServices(): Promise<void> {
     (url, init) => net.fetch(String(url), init),
   );
   await startDesktopBackend();
+  initializeClientHandoff();
+}
+
+/** Only the native Client launch parameter starts a handoff. Ordinary app
+ * startup, restoring a session or visiting the dashboard never grants it. */
+function queueClientHandoff(argv: readonly string[]): void {
+  const indexes = argv.flatMap((value, index) => value === "--osir-client-handoff-flow" ? [index] : []);
+  if (indexes.length !== 1) return;
+  const flowId = argv[indexes[0] + 1];
+  if (!flowId || !/^[A-Za-z0-9_-]{32,128}$/.test(flowId)) return;
+  if (!clientHandoff) { if (pendingClientFlows.size === 0) pendingClientFlows.add(flowId); return; }
+  showMainWindow();
+  void clientHandoff.run({ flowId }).then(result => {
+    if (result.status !== "error" || isQuitting || result.reason === "cancelled" || result.reason === "flow_pending") return;
+    const detail = result.reason === "account_mismatch"
+      ? "Anywhere 当前账号或本机设备与 OSIR 客户端不一致，请先退出原账号。"
+      : result.reason === "receiver_untrusted"
+        ? "应用版本无法验证，请通过 OSIR 客户端更新后重新打开。"
+        : result.reason === "capability_unavailable"
+          ? "账号自动连接服务尚未就绪，请稍后从 OSIR 客户端重新打开。"
+          : "自动连接未完成，请从 OSIR 客户端重新打开 Anywhere。";
+    // Fixed text only. Never include the token, proof or upstream response.
+    dialog.showErrorBox("Anywhere 自动连接", detail);
+  }).catch(() => dialog.showErrorBox("Anywhere 自动连接", "自动连接暂未完成，请重新打开。"));
+}
+
+function initializeClientHandoff(): void {
+  if (process.platform !== "darwin") return;
+  const key = readReleasePublicKey(app.isPackaged ? process.resourcesPath : app.getAppPath());
+  let trust: Awaited<ReturnType<typeof fetchHandoffTrust>> | null = null;
+  let accountValidated = false;
+  let handoffAccepted = false;
+  let acceptedGeneration: number | null = null;
+  const sessions = desktopSessions!;
+  clientHandoff = new OsirClientHandoffController({
+    transport: new OsirClientHandoffTransport({
+      home: app.getPath("home"), pythonExecutable: bundledPythonExecutable(resolvePythonBundleDir()),
+      helperPath: app.isPackaged
+        ? path.join(process.resourcesPath, "handoff", "osir-client-handoff-peer.py")
+        : path.join(__dirname, "osir-client-handoff-peer.py"),
+      verifyPeer: async (peer, signal) => {
+        if (signal.aborted) throw new Error("cancelled");
+        const bundle = path.dirname(path.dirname(path.dirname(peer.executablePath)));
+        if (peer.executablePath !== path.join(bundle, "Contents/MacOS/osir_client") || !bundle.endsWith(".app")) throw new Error("peer_untrusted");
+        trust ??= await fetchHandoffTrust((input, init) => net.fetch(String(input), init), key, signal);
+        await verifyHandoffBundle(bundle, "osir-client", trust);
+        if (signal.aborted) throw new Error("cancelled");
+      },
+    }),
+    fetcher: (input, init) => net.fetch(String(input), init),
+    prepareLogin: async () => { accountValidated = false; handoffAccepted = false; acceptedGeneration = null; trust = null; await sessions.prepareLogin(); },
+    reject: async (credentials, server) => {
+      // Revocation must run even when the backend has crashed or cannot stop.
+      try {
+        if (handoffAccepted) {
+          desktopOAuthResult = null;
+          await requireBackend().request("/stop", { method: "POST" });
+        }
+      } finally {
+        // The renderer may already have rotated the accepted refresh token.
+        // Clear this flow's current login without touching a newer account.
+        try {
+          if (acceptedGeneration !== null && sessions.identityForHandoff().generation === acceptedGeneration) await sessions.logout();
+        } finally { await sessions.reject(credentials, server); }
+      }
+    },
+    readAccountContext: async signal => {
+      if (!accountValidated) { await sessions.refresh(activeDesktopServer()); accountValidated = true; }
+      if (signal.aborted) throw new Error("cancelled");
+      const snapshot = sessions.identityForHandoff();
+      const binding = await requireBackend().request<PublicLocalDesktopBinding | null>("/device/binding", { signal });
+      return { generation: snapshot.generation, desktopIdentity: snapshot.identity, localBinding: binding };
+    },
+    onAuthenticated: async ({ session: credentials, server, configuredToolTypes, accountGeneration }, signal) => {
+      if (isQuitting || signal.aborted || sessions.identityForHandoff().generation !== accountGeneration) return false;
+      await desktopOAuthFlow.cancel();
+      if (isQuitting || signal.aborted || sessions.identityForHandoff().generation !== accountGeneration) return false;
+      sessions.accept(credentials, server);
+      handoffAccepted = true;
+      acceptedGeneration = sessions.identityForHandoff().generation;
+      serverStore!.save(server);
+      await syncBackendServerConnection();
+      if (isQuitting || signal.aborted) return false;
+      showMainWindow();
+      const results = await bootstrapClientHandoff({ backend: requireBackend(), fetcher: (input, init) => net.fetch(String(input), init),
+        session: credentials, configuredToolTypes, signal });
+      const incomplete = results.filter(result => result.status !== "ready");
+      if (incomplete.length && !isQuitting && !signal.aborted) {
+        dialog.showErrorBox("Anywhere 实例准备未完成", `${incomplete.map(result => result.tool.toUpperCase()).join("、")} 尚未就绪。请在 OSIR 客户端检查对应工具的模型配置，再重新打开 Anywhere。`);
+      }
+      if (isQuitting || signal.aborted || sessions.identityForHandoff().generation !== acceptedGeneration) return false;
+      publishDesktopOAuthResult({ status: "success", accessToken: credentials.accessToken, server });
+      return true;
+    },
+  });
 }
 
 /** Explicit local acceptance menu; normal launches never enter this path. */
@@ -1015,6 +1125,7 @@ async function startDesktopBackend(): Promise<void> {
     onExit: (message) => {
       appendMainLog({ level: "ERROR", message });
       if (backend !== client || isQuitting) return;
+      void clientHandoff?.cancel();
       // Every Connector, device and settings call goes through the backend,
       // so an owned window would keep failing without saying why. The gate
       // says it, and its recheck starts a new backend.
@@ -1029,6 +1140,7 @@ async function startDesktopBackend(): Promise<void> {
 
 /** The new backend probes ownership itself; its events replace this state. */
 async function restartDesktopBackend(): Promise<OwnershipState> {
+  await clientHandoff?.cancel();
   appendMainLog({ level: "WARNING", message: "Restarting the Desktop backend." });
   try {
     await startDesktopBackend();
@@ -1088,6 +1200,7 @@ async function requestQuit({ confirm = false }: { confirm?: boolean } = {}): Pro
   isQuitting = true;
   shutdownPromise = (async () => {
     try {
+      await clientHandoff?.dispose();
       await desktopOAuthFlow.shutdown();
       await projectConnector?.stop();
       await scopedTestConnector?.stop();
@@ -1120,6 +1233,7 @@ if (hasSingleInstanceLock) {
   // Onboarding entries also work in development, where the OS protocol handler
   // is not installed and the URL only arrives through argv.
   const initialOnboarding = desktopOnboardingFromArgv(process.argv);
+  queueClientHandoff(process.argv);
   if (initialOnboarding) queueDesktopOnboarding(initialOnboarding);
   app.on("open-url", (event, rawUrl) => {
     event.preventDefault();
@@ -1134,9 +1248,10 @@ if (hasSingleInstanceLock) {
     Menu.setApplicationMenu(null);
     registerStaticWebProtocol();
     await initializeDesktopServices();
-    updates = new DesktopUpdateService({
+    try { updates = new DesktopUpdateService({
       directory: path.join(app.getPath("userData"), "updates"),
       currentVersion: app.getVersion(),
+      currentRevision: readPackagedRevision(app.getAppPath(), app.getVersion()),
       manifestUrl: RELEASE_MANIFEST_URL,
       publicKeyPem: readReleasePublicKey(app.isPackaged ? process.resourcesPath : app.getAppPath()),
       platform: process.platform,
@@ -1148,7 +1263,11 @@ if (hasSingleInstanceLock) {
         if (error) throw new Error(error);
       },
       onState: (state) => sendToRenderer("workbench:updates:state", state),
-    });
+    }); } catch {
+      // Invalid revision metadata disables updates, never downgrades to zero or
+      // prevents the account/device workbench from opening.
+      appendMainLog({ level: "ERROR", message: "更新信息无法验证，请从 OSIR 客户端修复安装。" });
+    }
     createWindowsTray();
     // A silent login-item launch must not flash a window when this machine
     // already owns the Connector, so it is the one case that waits.
@@ -1161,6 +1280,8 @@ if (hasSingleInstanceLock) {
       showOnLaunch = ownership.status !== "owned";
     }
     createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
+    for (const flowId of pendingClientFlows) queueClientHandoff(["--osir-client-handoff-flow", flowId]);
+    pendingClientFlows.clear();
     installScopedTestMenu();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
     if (!showOnLaunch) hideDockIfIdle();
@@ -1174,6 +1295,7 @@ if (hasSingleInstanceLock) {
 
   app.on("activate", () => showMainWindow());
   app.on("second-instance", (_event, argv) => {
+    queueClientHandoff(argv);
     const onboarding = desktopOnboardingFromArgv(argv);
     if (onboarding) queueDesktopOnboarding(onboarding);
     showMainWindow();

@@ -87,6 +87,11 @@ export class DesktopSessionStore {
 }
 
 export class DesktopSessionManager {
+  private handoffIdentity: DesktopSessionPayload["identity"] | null = null;
+  /** Native-only snapshot; a restored session must be refreshed before use. */
+  identityForHandoff(): { generation: number; identity: DesktopSessionPayload["identity"] | null } {
+    return { generation: this.generation, identity: this.handoffIdentity ? { ...this.handoffIdentity } : null };
+  }
   private current: Stored | null = null;
   private flight: Promise<PublicDesktopSession | null> | null = null;
   private generation = 0;
@@ -107,6 +112,7 @@ export class DesktopSessionManager {
     this.generation++;
     this.controller?.abort();
     this.current = saved;
+    this.handoffIdentity = { ...payload.identity };
     return { accessToken: payload.accessToken, expiresIn: 300, server };
   }
 
@@ -147,9 +153,10 @@ export class DesktopSessionManager {
       await this.prepareLogin();
       if (generation !== this.generation || controller.signal.aborted) throw new Error(SESSION_ERROR);
       const saved = this.current ?? this.store.read();
-      if (!saved) return null;
-      if (saved.expiresAt <= Date.now()) { this.current = null; this.store.clear(); return null; }
+      if (!saved) { this.handoffIdentity = null; return null; }
+      if (saved.expiresAt <= Date.now()) { this.current = null; this.handoffIdentity = null; this.store.clear(); return null; }
       if (saved.pendingLogout) {
+        this.handoffIdentity = null;
         await this.post(saved.server, "logout", saved.refreshToken, controller.signal);
         if (generation === this.generation) this.store.clear();
         return null;
@@ -161,10 +168,12 @@ export class DesktopSessionManager {
         expiresAt: Math.min(saved.expiresAt, Date.now() + result.refreshExpiresIn * 1000) };
       this.store.write(next);
       this.current = next;
+      this.handoffIdentity = { ...result.identity };
       return { accessToken: result.accessToken, expiresIn: result.expiresIn, server: saved.server };
     })().catch(error => {
       if (error instanceof SessionRejected && generation === this.generation) {
         this.current = null;
+        this.handoffIdentity = null;
         this.store.clear();
       }
       throw new Error(SESSION_ERROR);
@@ -174,6 +183,7 @@ export class DesktopSessionManager {
   }
 
   async logout(): Promise<{ pending: boolean }> {
+    this.handoffIdentity = null;
     const generation = ++this.generation;
     this.controller?.abort();
     let saved = this.current;

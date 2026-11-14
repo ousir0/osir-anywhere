@@ -19,6 +19,7 @@ class CodexRuntimeLifecycle:
     started: bool = False
     model_list_result: CodexModelListResult | None = None
     on_handled: Callable[[CodexNotificationMessage], Awaitable[None]] | None = None
+    require_model_list: bool = False
 
     async def start(self) -> None:
         if self.started:
@@ -38,7 +39,9 @@ class CodexRuntimeLifecycle:
             return
         try:
             self.model_list_result = await self.client.list_models()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            if self.require_model_list:
+                raise
             logger.debug("codex bootstrap read failed method=model/list error={}", exc)
 
     async def handle_notification(self, message: CodexNotificationMessage) -> None:

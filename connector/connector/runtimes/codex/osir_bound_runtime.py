@@ -19,6 +19,7 @@ class BoundCodexRuntime(CodexRuntime):
     def __post_init__(self):
         super().__post_init__()
         self._session_reader.native_history_enabled = False
+        self._lifecycle.require_model_list = True
         self._binding_health_reported = False
         self._binding_watch = None
 

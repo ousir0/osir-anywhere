@@ -80,6 +80,57 @@ test("the installed Desktop version controls availability and prevents downgrade
   }
 });
 
+test("signed revisions break only equal public-version ties; missing revisions are legacy zero", async t => {
+  const h = harness(t, { currentVersion: "2.2.1", currentRevision: 2 });
+  for (const [version, revision, available] of [
+    ["2.2.1", undefined, false], ["2.2.1", 1, false], ["2.2.1", 2, false], ["2.2.1", 3, true],
+    ["2.2.0", 999, false], ["2.2.2", undefined, true], ["2.2.1+new-build", 3, true],
+  ] as const) {
+    h.setManifest({ version, revision });
+    const state = await h.service.check(server);
+    assert.equal(state.available, available, `${version} revision ${revision}`);
+    assert.equal(state.dialogOpen, available);
+    assert.equal(state.release?.revision, revision);
+    if (!available) { await h.service.download(); assert.equal(h.opened.length, 0); }
+  }
+  h.setManifest({ version: "2.2.1", revision: 1 });
+  assert.equal((await h.make({ currentRevision: undefined }).check(server)).available, true);
+});
+
+test("installed revision must be a trusted nonnegative safe integer", t => {
+  const h = harness(t);
+  for (const currentRevision of [-1, 0.5, NaN, Infinity, 65536, Number.MAX_SAFE_INTEGER + 1, "1", null]) {
+    assert.throws(() => h.make({ currentRevision: currentRevision as number }), /currentRevision/);
+  }
+});
+
+test("ignore persists the exact version/revision and never suppresses a later revision", async t => {
+  const h = harness(t, { currentVersion: "2.2.1", currentRevision: 1 });
+  h.setManifest({ version: "2.2.1", revision: 2 });
+  await h.service.check(server);
+  h.service.ignoreVersion();
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(h.directory, "state.json"), "utf8")).ignoredVersions[RELEASE_MANIFEST_URL],
+    { version: "2.2.1", revision: 2 });
+  assert.equal((await h.make().check({ ...server, serverUrl: "https://other.test" })).ignored, true);
+  h.setManifest({ version: "2.2.1", revision: 3 });
+  const next = await h.make().check(server);
+  assert.equal(next.ignored, false);
+  assert.equal(next.dialogOpen, true);
+});
+
+test("legacy and malformed ignores cannot hide new revisions", async t => {
+  const h = harness(t, { currentVersion: "2.2.0" });
+  for (const ignored of ["2.2.1", { version: "2.2.1", revision: 0 }, { version: "2.2.1" },
+    { version: "2.2.1", revision: "1" }, { version: "2.2.1", revision: -1 }, null, []]) {
+    fs.writeFileSync(path.join(h.directory, "state.json"), JSON.stringify({ ignoredVersions: { [RELEASE_MANIFEST_URL]: ignored } }));
+    h.setManifest({ version: "2.2.1", revision: 1 });
+    assert.equal((await h.make().check(server)).ignored, false);
+  }
+  fs.writeFileSync(path.join(h.directory, "state.json"), JSON.stringify({ ignoredVersions: { [RELEASE_MANIFEST_URL]: "2.2.1" } }));
+  h.setManifest({ version: "2.2.1" });
+  assert.equal((await h.make().check(server)).ignored, true, "legacy ignore applies only to legacy revision zero");
+});
+
 test("ignore is product/channel scoped, survives restart/server change, and newer releases prompt", async t => {
   const h = harness(t);
   await h.service.check(server);

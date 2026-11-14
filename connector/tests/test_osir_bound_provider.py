@@ -236,6 +236,28 @@ def test_normal_sdk_models_defaults_switch_and_no_history_scan(fixture, monkeypa
     asyncio.run(run())
 
 
+def test_cold_start_preserves_native_model_list_error(fixture):
+    async def run():
+        native, host = Native(), FakeHost()
+        failure = RuntimeInvalidRequestError("native model/list response was invalid")
+
+        async def fail_to_list_models():
+            raise failure
+
+        native.list_models = fail_to_list_models
+        runtime = await provider_for(fixture, native).create_runtime(
+            await provider_for(fixture, native).validate_config({}), host)
+
+        with pytest.raises(RuntimeInvalidRequestError) as raised:
+            await runtime.start()
+
+        assert raised.value is failure
+        assert native.started and native.stopped
+        assert not isinstance(raised.value, ModelBindingUnavailable)
+
+    asyncio.run(run())
+
+
 def test_stale_cached_reads_and_publication_fail_then_new_runtime_repins(fixture):
     async def run():
         native, host = Native(), FakeHost()

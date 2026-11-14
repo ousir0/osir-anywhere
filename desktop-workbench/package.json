@@ -58,6 +58,10 @@
     ],
     "extraResources": [
       {
+        "from": "electron/osir-client-handoff-peer.py",
+        "to": "handoff/osir-client-handoff-peer.py"
+      },
+      {
         "from": "build/release-public.pub",
         "to": "build/release-public.pub"
       },

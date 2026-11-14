@@ -1,6 +1,8 @@
 # Anywhere 多平台构建与可恢复发版合同
 
-日期：2026-11-14。当前交付是工具与离线测试；未冻结最终源码、修改版本、调度真实构建、上传正式对象或切换 stable。所有正式操作由主任务统一调度。
+日期：2026-11-14，当前状态更新于2026-11-15。本文为操作合同；后文历史交付说明保留原时点边界。最新正式版本为 **Anywhere2.2.1 runtime-r2 / Client0.1.11**，均完成对象存储公开读回、独立备份恢复及条件切换；用户可手动更新。最终包Claude真实对话通过，Codex运行与DSH隔离桥接通过，后两项真实对话及新版Client桌面自动接线仍待验收。详见 [11月15日发布记录](../../cc-switch-osir-client/docs/OSIR-RELEASE-0.1.11-2026-11-15.md)。
+
+以下为11月14日历史发布记录：**当前状态：Anywhere 2.2.0 r4 与 Client 0.1.10 r3 均已正式发布。** Anywhere stable 已条件切换并完成独立备份恢复及验签；Client 正式 feed 已核对。正式Client 0.1.10/r2从stable下载并验签Anywhere DMG、Finder复制到隔离home、重新检测为已安装v2.2.0及准确路径均已通过；未启动新Anywhere实例，登录/模型不在此验收范围内。客户端Ready进度显示修复只在未发布源码，待下版带入。真实0.1.9→0.1.10自动更新三平台均已通过：ARM Mac、Intel Mac使用run `43565893214`；Windows x64使用Windows-only run `43566840149`。均包含真实UI点击、旧进程退出、安装器自动拉起新进程、同路径正式r3字节/原生版本窗口、DB25→26及合成数据保留。Windows旧失败为进程级测试home与NSIS重启后的数据目录不一致，改在干净托管runner默认用户home验证后通过；未修改产品包、更新源或迁移/保留门槛。正式源码为 Anywhere commit `0900e431bef40c69d043e5af6e74431f30d0ea2d`、Client commit `ec2b05bab6224334e91922cd70c71faf8e9aee89`。证据与历史过程见 Client 仓库的 [实施记录](../../cc-switch-osir-client/docs/OSIR-ANYWHERE-RELEASE-IMPLEMENTATION-2026-11-14.md)；未来发布使用新plan，已发布工件无需重包。
 
 ## 最低可用入口
 
@@ -29,7 +31,7 @@ node desktop-workbench/scripts/osir-anywhere-release.mjs restore /absolute/backu
 - 私有 dedicated repo：主任务已创建 `ousir0/osir-anywhere`，bootstrap commit `edde4216ed7e6b6a45d312303035a55b9e953978`，preflight run `43504905639` 已成功。这不是产品源码冻结或安装器验收。
 - 主任务已实测四类 runner 的平台/架构；当前构建标签显式为 `macos-15`、`windows-2022`、可选 `windows-11-arm`。Universal 后续还须 `macos-15-intel` 原生验收。不开启 `macos-14`。
 - 主任务已实测 RainS3 条件创建、重复创建 412、错误 If-Match 412、正确 If-Match 和公开全量 200。证据 `/Users/ouwei/.codex/release-evidence/20261114-anywhere-ci-control-storage.json`。仅操作了测试前缀；stable 没有因此切换。
-- 主任务已统一候选版本：Anywhere **2.2.0**、Client **0.1.10**；发行最低配套为 `minimumClientVersion:0.1.10`、`minimumServerVersion:2.2.0`。仍等待关联功能收敛、受审源码与 recipe 冻结、云端配套；此前实测 Server `2.1.0` 不满足新发行最低要求，不能据此切换 stable。本任务不改任何版本文件。
+- 已发布合同：Anywhere **2.2.0**、Client **0.1.10**；stable manifest 要求 `minimumClientVersion:0.1.10`、`minimumServerVersion:2.2.0`。之前关于候选冻结、原包验收和云端配套的阻塞均为历史状态，不代表当前仍待发布。
 - 当前无 Developer ID 证书；workflow 明确生成 unsigned candidate。RSA 清单签名不能代替 Apple 公证或 Authenticode。
 - Meitner 负责 `desktop-workbench/scripts/osir-native-smoke.mjs` 及 test，主会话负责 workflow 原生验收聚合；本工具不重复实现或代写原生 smoke。当前专用 workflow 交付构建主体，不能称为完整发版已实机通过；publisher 对缺失最终原包、跨版本数据保留和 PATCH 更新发现报告保持拒绝。
 
@@ -155,7 +157,11 @@ null/null 仅表示人工已确认 stable 尚不存在；非首次发布必须�
 
 工件、清单、签名 provenance、原生证据和依赖解析证据写到 `RELEASE_ID/filename`。先 HEAD；存在则完整公开读回验证，不覆盖；不存在使用 If-None-Match:* PUT。即使竞争返回 412，也必须完整读回，摘要不符即停止。单文件上限 5GiB，超出拒绝，不用无条件 multipart 覆盖。主站不收发安装包字节。
 
-网络请求禁重定向；精确公开对象必须直接 HTTPS 200、无内容编码、精确 Content-Length 与 SHA-256。流式校验，90 秒停滞超时、45 分钟总上限；metadata/CAS 有更短总上限。不打印凭据、Authorization、服务端错误响应体或错误 headers。GET/PUT 不自动盲重试。失败副本和 package attempt 保留，不能为重试删除其他输出。
+### RainS3 小对象节流与有限读重试
+
+`desktop-workbench/scripts/osir-anywhere-storage.mjs` 已持久应用本次节流修复，并有既有 **39/39** 相关测试通过记录。默认对不超过1MiB的小对象操作间隔600ms，可用 `OSIR_ANYWHERE_STORAGE_INTERVAL_MS` 调整（范围0至60000ms）。GET/HEAD 遇到 HTTP 503 时，仅当 `Retry-After` 是0至60秒的整数且最多未重试两次，才等待后重试；重签请求以避免SigV4签名过期。其他状态、无效/过长 Retry-After 与传输错误均失败关闭。PUT，包括不可变对象条件写和stable CAS，**不自动重试**；结果不确定时先核对远端状态/回执，禁止盲目重写。
+
+读回仍须无重定向、直接 HTTPS 200、无内容编码、精确 Content-Length 与 SHA-256；保留90秒停滞超时、对象总时限及错误脱敏。不打印凭据、Authorization、服务端错误响应体或敏感 headers。失败副本和 package attempt 保留，不能为重试删除其他输出。本次 r4 已完成发布，原prepared plan因工具指纹变化已过期；任何未来发布都要重新plan，不能用旧plan续发。
 
 publish 前再次从公开对象地址独立读取到 backup，不以 staging 副本充数；backup/stage/restore 不得相互嵌套或通过链接重叠。独立恢复到新目录，逐文件重新核对 index、字节和签名清单，保留 previous-stable 封套及恢复回执。**目录隔离不能证明独立磁盘故障域**；生产操作人应将 backup 放独立存储/离线介质并确认容量。本机剩余约 7GB，不能在本机做大包构建或盲目保留多份包。
 

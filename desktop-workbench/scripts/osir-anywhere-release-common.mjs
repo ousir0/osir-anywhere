@@ -10,6 +10,11 @@ export const PREFIX = 'osir-anywhere/releases';
 export const TARGETS = ['darwin-universal', 'win32-x64'];
 export const SHA = /^[a-f0-9]{64}$/;
 export function check(value, message) { if (!value) throw new Error(message); }
+/** Omission or explicit zero is legacy. Match the Client installer's u16 bound. */
+export function releaseRevision(value) {
+  check(value === undefined || (Number.isSafeInteger(value) && value >= 0 && value <= 65535), 'releaseRevision/revision must be an integer in 0..65535 when supplied');
+  return value ?? 0;
+}
 export function safe(value) {
   check(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,179}$/.test(value) && !value.includes('..'), 'Invalid release/file identity');
   return value;
@@ -75,6 +80,7 @@ export function manifest(envelope, publicKey) {
   const p = verifyEnvelope(envelope, publicKey);
   check(p.schemaVersion === 1 && p.productId === 'osir-anywhere' && p.channel === 'stable', 'Manifest product/channel mismatch');
   safe(p.releaseId); safe(p.version);
+  releaseRevision(p.revision);
   check(!Number.isNaN(Date.parse(p.publishedAt)) && Array.isArray(p.artifacts) && p.artifacts.length > 0, 'Invalid manifest');
   const seen = new Set();
   for (const a of p.artifacts) {

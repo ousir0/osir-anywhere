@@ -5,7 +5,8 @@ import { RELEASE_SECRET_VARIABLES, readMacReleaseCredentials, readWindowsRelease
 import { resolveDesktopBuildConfig } from './desktop-build-config.mjs';
 import { sourcePath, verifySource } from './osir-anywhere-source.mjs';
 import { inspectSystemSignature } from './osir-anywhere-system-signature.mjs';
-import { SHA, bytes, check, cli, digest, fingerprint, immutableFile, inspect, isMain, json, matches, safe, within } from './osir-anywhere-release-common.mjs';
+import { writeBuildInfo } from './write-build-info.mjs';
+import { SHA, bytes, check, cli, digest, fingerprint, immutableFile, inspect, isMain, json, matches, releaseRevision, safe, within } from './osir-anywhere-release-common.mjs';
 
 export const CONFIG_KEYS = ['OSIR_IDENTITY_API_ORIGIN', 'OSIR_IDENTITY_WEB_ORIGIN', 'OSIR_ANYWHERE_API_ORIGIN', 'OSIR_ANYWHERE_OAUTH_WEB_ORIGIN', 'OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED'];
 const BUILD_KEYS = ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'CI', 'GITHUB_ACTIONS', 'RUNNER_TEMP', 'ELECTRON_CACHE', 'ELECTRON_BUILDER_CACHE', 'YARN_CACHE_FOLDER', 'YARN_GLOBAL_FOLDER'];
@@ -69,6 +70,15 @@ export async function buildPlan(spec, target) {
   safe(spec.releaseId); safe(spec.version);
   const root = join(spec.checkout, 'desktop-workbench');
   check((await json(join(root, 'package.json'))).version === spec.version, 'Build version mismatch');
+  const revision = releaseRevision(spec.releaseRevision);
+  const recipeInput = source.files.find(file => file.path === 'osir-build-recipe.json');
+  if (recipeInput) {
+    check(SHA.test(spec.recipeSha256 ?? '') && recipeInput.sha256 === spec.recipeSha256, 'Build recipe must match reviewed source hash');
+    const recipe = await json(join(spec.checkout, 'osir-build-recipe.json'));
+    check(releaseRevision(recipe.releaseRevision) === revision, 'Build releaseRevision differs from reviewed recipe');
+  } else {
+    check(revision === 0 && spec.recipeSha256 == null, 'Positive releaseRevision requires the fixed reviewed source recipe');
+  }
   const config = resolveDesktopBuildConfig(await json(join(root, 'config.json')), spec.config ?? {});
   const environment = buildEnvironment({}, spec.config ?? {});
   check(environment.OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED === '1', 'Production OAuth acceptance flag required');
@@ -76,8 +86,18 @@ export async function buildPlan(spec, target) {
   check(spec.dependencyLockSha256 === deps.lockSha256, 'All targets require the same reviewed externally resolved dependency lock');
   const checkoutHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: spec.checkout, encoding: 'utf8' }).stdout?.trim();
   check(checkoutHead === spec.checkoutHead, 'Dedicated checkout SHA mismatch');
-  return { schemaVersion: 1, releaseId: spec.releaseId, version: spec.version, target, sourceSha256: source.sourceSha256,
+  return { schemaVersion: 1, releaseId: spec.releaseId, version: spec.version, releaseRevision: revision, target, sourceSha256: source.sourceSha256,
     upstreamGitHead: source.upstreamGitHead, checkoutHead, recipeSha256: spec.recipeSha256 ?? null, windowsArm64EvidenceSha256, configSha256: fingerprint(config), configEnvironmentSha256: fingerprint(spec.config ?? {}), dependencies: deps };
+}
+/** Final packaging gate. Compiled bytes cannot silently fall back to legacy zero. */
+export async function assertCompiledRevision(root, plan) {
+  const file = join(root, 'dist/build-info.json'), stat = await lstat(file);
+  check(stat.isFile() && !stat.isSymbolicLink() && stat.size > 0 && stat.size <= 4096, 'Compiled build-info must be a bounded regular file');
+  const info = await json(file);
+  check(info && Object.keys(info).sort().join(',') === 'desktopVersion,productId,revision,serverVersion'
+    && info.productId === 'osir-anywhere' && info.desktopVersion === plan.version
+    && typeof info.serverVersion === 'string' && info.serverVersion.length > 0 && info.serverVersion.length <= 128
+    && info.revision !== undefined && releaseRevision(info.revision) === releaseRevision(plan.releaseRevision), 'Compiled build-info version/revision differs from reviewed build plan');
 }
 export async function assertCompiledBuild(root, target, environment) {
   const path = environment.OSIR_ANYWHERE_BUILD_SPEC;
@@ -85,6 +105,7 @@ export async function assertCompiledBuild(root, target, environment) {
   const spec = await json(path);
   check(await realpath(root) === await realpath(join(spec.checkout, 'desktop-workbench')), '--skip-build checkout mismatch');
   const plan = await buildPlan(spec, target);
+  await assertCompiledRevision(root, plan);
   const compiled = await json(join(spec.stateDirectory, target, 'compiled.json'));
   check(compiled.planSha256 === fingerprint(plan) && compiled.outputsSha256 === await outputsFingerprint(root), '--skip-build source/config/dependency/output fingerprint mismatch');
 }
@@ -117,6 +138,7 @@ export async function buildPrepare(spec, target, skipBuild = false) {
     const compiledPath = join(out, 'compiled.json');
     const compileStarted = performance.now();
     if (skipBuild) {
+      await assertCompiledRevision(root, plan);
       const compiled = await json(compiledPath);
       check(compiled.planSha256 === fingerprint(plan) && compiled.outputsSha256 === await outputsFingerprint(root), '--skip-build source/config/dependency/output fingerprint mismatch');
     } else {
@@ -125,6 +147,11 @@ export async function buildPrepare(spec, target, skipBuild = false) {
       run(yarn, ['bundle:uv'], root, { ...clean, UV_BUNDLE_TARGETS: targets });
       run(yarn, ['bundle:python'], root, { ...clean, PYTHON_BUNDLE_TARGETS: targets });
       run(yarn, ['build'], root, clean);
+      // Last write happens after all nested build:info calls; only the fixed
+      // source recipe chooses revision, never inherited environment variables.
+      if (plan.recipeSha256) writeBuildInfo({ pyprojectPath: join(spec.checkout, 'server/pyproject.toml'), packagePath: join(root, 'package.json'),
+        recipePath: join(spec.checkout, 'osir-build-recipe.json'), outputPath: join(root, 'dist/build-info.json') });
+      await assertCompiledRevision(root, plan);
       await verifySource(spec.checkout);
       await immutableFile(compiledPath, bytes({ planSha256: fingerprint(plan), outputsSha256: await outputsFingerprint(root) }));
     }
@@ -140,6 +167,7 @@ export async function buildPrepare(spec, target, skipBuild = false) {
     const packageStarted = performance.now();
     run(process.execPath, ['scripts/dist-desktop.mjs', platform === 'darwin' ? 'mac' : 'win', `--${target.split('-')[1]}`, '--skip-build'], root,
       { ...signingEnv, OSIR_ANYWHERE_POC_OUTPUT_DIR: attempt, OSIR_ANYWHERE_BUILD_SPEC: specPath });
+    await assertCompiledRevision(root, plan);
     await verifySource(spec.checkout);
     const installers = (await readdir(attempt)).filter(f => f.endsWith(platform === 'darwin' ? '.dmg' : '.exe'));
     check(installers.length === 1, 'Expected exactly one final platform installer');

@@ -11,6 +11,8 @@ import type { DesktopUpdateState, ReleaseArtifact } from "../shared/desktop-upda
 type Options = {
   directory: string;
   currentVersion: string;
+  /** Trusted packaged build-info only; omitted for legacy revision zero. Never from IPC/Server/env. */
+  currentRevision?: number;
   /** Trusted build/runtime configuration only; never populated from Server data. */
   manifestUrl: string;
   publicKeyPem: string;
@@ -37,6 +39,9 @@ export class DesktopUpdateService {
   private artifact: ReleaseArtifact | null = null;
 
   constructor(private readonly options: Options) {
+    if (options.currentRevision !== undefined && (!Number.isSafeInteger(options.currentRevision) || options.currentRevision < 0 || options.currentRevision > 65535)) {
+      throw new Error("currentRevision must be an integer in 0..65535 from trusted build-info.");
+    }
     this.state = this.initialState();
   }
 
@@ -80,7 +85,8 @@ export class DesktopUpdateService {
         if (comparison === null) throw new Error("更新清单无法与当前桌面版本比较。");
         controller.signal.throwIfAborted();
         if (generation !== this.generation) return this.getState();
-        const available = comparison > 0;
+        const releaseRevision = manifest.revision ?? 0;
+        const available = comparison > 0 || (comparison === 0 && releaseRevision > (this.options.currentRevision ?? 0));
         let artifact = selectReleaseArtifact(manifest, this.options.platform, this.options.arch);
         let errorDetail: string | null = available && !artifact ? "此发行版没有适用于当前系统和架构的安装包。" : null;
         // Health is consulted only for an explicit minimum Server requirement.
@@ -95,8 +101,12 @@ export class DesktopUpdateService {
         controller.signal.throwIfAborted();
         if (generation !== this.generation) return this.getState();
         this.artifact = available ? artifact : null;
-        const ignoredVersion = this.readIgnored()[this.options.manifestUrl];
-        const ignored = available && typeof ignoredVersion === "string" && compareUpdateVersions(ignoredVersion, manifest.version) === 0;
+        const preference = this.readIgnored()[this.options.manifestUrl];
+        // Old string preferences apply only to the old, unrevisioned release.
+        const ignoredRelease = typeof preference === "string" ? { version: preference, revision: 0 } :
+          preference && typeof preference === "object" && !Array.isArray(preference) ? preference as { version?: unknown; revision?: unknown } : null;
+        const ignored = available && !!ignoredRelease && typeof ignoredRelease.version === "string" &&
+          ignoredRelease.revision === releaseRevision && compareUpdateVersions(ignoredRelease.version, manifest.version) === 0;
         const { artifacts: _artifacts, ...release } = manifest;
         this.publish({ checking: false, latestVersion: manifest.version, available, ignored, release,
           artifact: this.artifact ? { platform: this.artifact.platform, arch: this.artifact.arch,
@@ -126,7 +136,9 @@ export class DesktopUpdateService {
     if (!this.state.available || !this.state.latestVersion || this.downloadPromise) return this.getState();
     try {
       writeJsonFile(path.join(this.options.directory, "state.json"), {
-        ignoredVersions: { ...this.readIgnored(), [this.options.manifestUrl]: this.state.latestVersion },
+        ignoredVersions: { ...this.readIgnored(), [this.options.manifestUrl]: {
+          version: this.state.latestVersion, revision: this.state.release?.revision ?? 0,
+        } },
       });
       this.publish({ ignored: true, dialogOpen: false });
     } catch {

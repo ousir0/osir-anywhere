@@ -657,6 +657,69 @@ function seedLocalConnector(harness: ReturnType<typeof createHarness>): void {
   harness.mock.authFailed = true;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+test("a pre-cancelled device operation never acquires ownership, provisions or starts", async t => {
+  const harness = createHarness(async () => { throw new Error("must not send HTTP"); });
+  t.after(harness.cleanup);
+  t.mock.method(harness.connector, "preflightProvisioning", async () => { throw new Error("must not preflight"); });
+  const cancellation = new AbortController(); cancellation.abort();
+  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "fixture" }, cancellation.signal), /cancelled/);
+  await assert.rejects(harness.service.reconnectAndConnect({ userId: "user-1", userToken: "fixture" }, cancellation.signal), /cancelled/);
+  assert.equal(harness.mock.startCalls + harness.mock.restartCalls, 0);
+});
+
+test("a cancelled replacement failure cannot resume the previous account's runtime", async t => {
+  const posted = deferred<void>(), response = deferred<Response>();
+  const requests: string[] = [];
+  const harness = createHarness(async (_url, input) => {
+    requests.push(input?.method ?? "GET");
+    if (input?.method === "GET") return Response.json({ connectors: [] });
+    posted.resolve(); return response.promise;
+  });
+  t.after(harness.cleanup);
+  seedLocalConnector(harness); harness.mock.running = true; harness.mock.authFailed = false;
+  const cancellation = new AbortController();
+  const rejected = assert.rejects(harness.service.createAndConnect({ userId: "user-2", userToken: "fixture", name: "Other account" }, cancellation.signal), /cancelled/);
+  await posted.promise; cancellation.abort(); await rejected;
+  response.resolve(Response.json({ detail: "unavailable" }, { status: 503 })); await nextTurn();
+  assert.equal(harness.mock.startCalls, 0);
+  assert.equal(harness.mock.running, false);
+  assert.equal(harness.binding.get()?.ownerUserId, "user-1");
+  assert.deepEqual(requests, ["GET", "POST"]);
+});
+
+test("cancelled successful create preserves persisted credentials even when the local acknowledgement fails", async t => {
+  const saving = deferred<void>(), acknowledgement = deferred<void>();
+  const requests: string[] = [];
+  const harness = createHarness(async (_url, input) => {
+    requests.push(input?.method ?? "GET");
+    return Response.json(input?.method === "GET" ? { connectors: [] }
+      : { connector: { id: "created-device" }, connectorToken: "one-time-fixture" });
+  });
+  t.after(harness.cleanup);
+  t.mock.method(harness.connector, "saveCredentials", async (config: ConnectorPrivateConfig) => {
+    harness.mock.credential = config; saving.resolve(); await acknowledgement.promise;
+    throw new Error("local acknowledgement failed");
+  });
+  const cancellation = new AbortController();
+  const rejected = assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "fixture", name: "Test" }, cancellation.signal), /cancelled/);
+  await saving.promise; cancellation.abort(); await rejected;
+  await assert.rejects(harness.service.createAndConnect({ userId: "user-1", userToken: "fixture" }), /still settling/);
+  acknowledgement.resolve(); await nextTurn();
+  assert.equal(harness.binding.get()?.manualDisconnected, true);
+  assert.equal(harness.mock.credential?.connectorId, "created-device");
+  assert.equal(harness.mock.startCalls, 0);
+  await harness.service.reconnectAndConnect({ userId: "user-1", userToken: "fixture" });
+  assert.equal(harness.mock.restartCalls, 1);
+  assert.deepEqual(requests, ["GET", "POST"], "a committed cloud create is never repeated or rolled back for cancellation alone");
+});
+
 function createHarness(fetcher: (input: string | URL, init?: RequestInit) => Promise<Response>) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aa-desktop-device-test-"));
   const binding = new DesktopBindingStore(path.join(directory, "binding.json"));

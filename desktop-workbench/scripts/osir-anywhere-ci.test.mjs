@@ -19,6 +19,14 @@ test('reviewed recipe binds raw bytes and rejects sourceSha self-reference and s
   }
   const secret = bytes({ releaseId: 'test', config: { AWS_SECRET_ACCESS_KEY: 'synthetic' } });
   assert.throws(() => reviewedRecipe(secret, digest(secret)), /configuration/);
+  for (const releaseRevision of [0, 2, 65535]) {
+    const revised = bytes({ ...JSON.parse(raw), releaseRevision });
+    assert.equal(reviewedRecipe(revised, digest(revised)).releaseRevision, releaseRevision);
+  }
+  for (const releaseRevision of [-1, 65536, 1.5, '2', null]) {
+    const revised = bytes({ ...JSON.parse(raw), releaseRevision });
+    assert.throws(() => reviewedRecipe(revised, digest(revised)), /releaseRevision/);
+  }
 });
 
 test('CI spec stays outside frozen source, exports runner paths and retains one resolution on failed-job reruns', async t => {
@@ -32,7 +40,7 @@ test('CI spec stays outside frozen source, exports runner paths and retains one 
   const documents = ['docs/OSIR-ANYWHERE-CONNECTION-VERIFICATION-2026-11-13.md', 'docs/OSIR-ANYWHERE-ALIYUN-ROLLOUT-2026-11-13.md'];
   await mkdir(join(checkout, 'docs'));
   for (const document of documents) await writeFile(join(checkout, document), `synthetic fixture ${document}`);
-  const recipe = bytes({ releaseId: 'fixture-2.2.0', config: { OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED: '1' },
+  const recipe = bytes({ releaseId: 'fixture-2.2.0', releaseRevision: 2, config: { OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED: '1' },
     oauthEvidence: { basis: 'prior-contract-real-desktop-and-browser-verification', scope: 'candidate-build-only', requiresFinalPackageReverification: true,
       documents: documents.map(path => ({ path, sha256: digest(`synthetic fixture ${path}`) })) } });
   await writeFile(join(checkout, 'osir-build-recipe.json'), recipe);
@@ -47,6 +55,7 @@ test('CI spec stays outside frozen source, exports runner paths and retains one 
   const run = (args, extra = {}) => spawnSync(process.execPath, [tool, ...args], { cwd: checkout, env: { ...env, ...extra }, encoding: 'utf8' });
   assert.notEqual(run([], { GITHUB_WORKFLOW_SHA: 'f'.repeat(40) }).status, 0, 'A different workflow commit cannot act as the reviewed build');
   assert.equal(run([]).status, 0);
+  assert.equal(JSON.parse(await readFile(join(temp, 'build-spec.json'), 'utf8')).releaseRevision, 2);
   assert.match(await readFile(envPath, 'utf8'), /OSIR_BUILD_SPEC=.*build-spec.json/);
   const lock = 'one reviewed dependency resolution\n'; await writeFile(join(checkout, 'desktop-workbench/yarn.lock'), lock);
   assert.equal(run(['lock']).status, 0);

@@ -78,6 +78,7 @@ export function verifyReleaseManifest(envelope: unknown, publicKeyPem: string): 
   if (!record(value) || value.schemaVersion !== 1 || value.productId !== "osir-anywhere" || value.channel !== "stable" ||
       typeof value.releaseId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.releaseId) || value.releaseId.includes("..") ||
       !version(value.version) || typeof value.publishedAt !== "string" ||
+      (value.revision !== undefined && (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0 || (value.revision as number) > 65535)) ||
       !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value.publishedAt) || !Number.isFinite(Date.parse(value.publishedAt)) ||
       (value.minimumClientVersion !== undefined && !version(value.minimumClientVersion)) ||
       (value.minimumServerVersion !== undefined && !version(value.minimumServerVersion)) ||
@@ -89,6 +90,7 @@ export function verifyReleaseManifest(envelope: unknown, publicKeyPem: string): 
   if (new Set(targets).size !== targets.length) throw new Error("发行清单包含重复的平台安装包。");
   return { schemaVersion: 1, productId: "osir-anywhere", channel: "stable", releaseId: value.releaseId,
     version: value.version, publishedAt: value.publishedAt,
+    ...(value.revision !== undefined ? { revision: value.revision as number } : {}),
     ...(value.minimumClientVersion !== undefined ? { minimumClientVersion: value.minimumClientVersion as string } : {}),
     ...(value.minimumServerVersion !== undefined ? { minimumServerVersion: value.minimumServerVersion as string } : {}), artifacts };
 }

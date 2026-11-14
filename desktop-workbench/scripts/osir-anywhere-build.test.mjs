@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { bytes, digest, fingerprint, json } from './osir-anywhere-release-common.mjs';
-import { assertCompiledBuild, buildEnvironment, buildPlan, outputsFingerprint, verifyWindowsArm64Evidence } from './osir-anywhere-build.mjs';
+import { assertCompiledBuild, assertCompiledRevision, buildEnvironment, buildPlan, outputsFingerprint, verifyWindowsArm64Evidence } from './osir-anywhere-build.mjs';
 import { sourcePath, sourcePlan, sourcePrepare, verifySource } from './osir-anywhere-source.mjs';
 
 const git = (root, args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -59,15 +59,17 @@ test('Windows ARM64 evidence binds actual native report raw hash and exact depen
   await writeFile(join(root, evidence.reportPath), bytes({ ...report, runner: { ...report.runner, arch: 'x64' } }));
   await assert.rejects(verifyWindowsArm64Evidence(root, source, evidence), /report changed/);
 });
-test('--skip-build binds actual source, endpoint config, dependency resolution and compiled bytes', async t => {
+for (const releaseRevision of [undefined, 3]) test(`--skip-build binds source, recipe revision ${releaseRevision ?? 'legacy zero'}, dependencies and compiled bytes`, async t => {
   const f = await sourceFixture(t), root = join(f.checkout, 'desktop-workbench');
   await mkdir(root);
   await writeFile(join(f.checkout, '.gitignore'), 'desktop-workbench/dist/\ndesktop-workbench/renderer/out/\ndesktop-workbench/build/uv/\ndesktop-workbench/build/python/\nnode_modules/\nyarn.lock\n');
   await writeFile(join(root, 'package.json'), JSON.stringify({ version: '2.1.1' }));
   await writeFile(join(root, 'config.json'), await readFile(new URL('../config.json', import.meta.url)));
+  const recipe = releaseRevision === undefined ? undefined : bytes({ releaseRevision });
+  if (recipe) await writeFile(join(f.checkout, 'osir-build-recipe.json'), recipe);
   git(f.checkout, ['add', '.gitignore', 'desktop-workbench']); git(f.checkout, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'build fixture']);
   const gitHead = git(f.checkout, ['rev-parse', 'HEAD']);
-  const source = await sourcePlan({ checkout: f.checkout, gitHead, files: ['.gitignore', 'hello.txt', 'desktop-workbench/package.json', 'desktop-workbench/config.json'] });
+  const source = await sourcePlan({ checkout: f.checkout, gitHead, files: ['.gitignore', 'hello.txt', 'desktop-workbench/package.json', 'desktop-workbench/config.json', ...(recipe ? ['osir-build-recipe.json'] : [])] });
   await writeFile(join(f.checkout, 'osir-source.json'), bytes(source));
   await mkdir(join(root, 'node_modules')); await writeFile(join(root, 'node_modules/.yarn-state.yml'), 'installed state');
   await writeFile(join(root, 'yarn.lock'), 'resolved dependencies');
@@ -75,13 +77,26 @@ test('--skip-build binds actual source, endpoint config, dependency resolution a
     await mkdir(join(root, name), { recursive: true }); await writeFile(join(root, name, 'payload'), 'compiled bytes');
   }
   const spec = { checkout: f.checkout, checkoutHead: gitHead, sourceSha256: source.sourceSha256, dependencyLockSha256: digest('resolved dependencies'), releaseId: 'test-release', version: '2.1.1', stateDirectory: join(f.root, 'state'),
+    releaseRevision, recipeSha256: recipe ? digest(recipe) : undefined,
     config: { OSIR_ANYWHERE_OAUTH_CONTRACT_VERIFIED: '1' } };
   const state = join(spec.stateDirectory, 'darwin-universal'); await mkdir(state, { recursive: true });
   const specPath = join(state, 'build-spec.json'); await writeFile(specPath, bytes(spec));
   const plan = await buildPlan(spec, 'darwin-universal');
+  assert.equal(plan.releaseRevision, releaseRevision ?? 0);
+  if (recipe) {
+    await assert.rejects(buildPlan({ ...spec, releaseRevision: 0 }, 'darwin-universal'), /differs from reviewed recipe/);
+    await assert.rejects(buildPlan({ ...spec, recipeSha256: digest('wrong') }, 'darwin-universal'), /recipe.*hash/);
+  } else await assert.rejects(buildPlan({ ...spec, releaseRevision: 1 }, 'darwin-universal'), /requires.*recipe/);
+  const info = { productId: 'osir-anywhere', desktopVersion: spec.version, revision: plan.releaseRevision, serverVersion: '2.2.0' };
+  await writeFile(join(root, 'dist/build-info.json'), bytes(info));
   await writeFile(join(state, 'compiled.json'), bytes({ planSha256: fingerprint(plan), outputsSha256: await outputsFingerprint(root) }));
   const env = { OSIR_ANYWHERE_BUILD_SPEC: specPath };
   await assertCompiledBuild(root, 'darwin-universal', env);
+  await writeFile(join(root, 'dist/build-info.json'), bytes({ ...info, revision: plan.releaseRevision + 1 }));
+  await writeFile(join(state, 'compiled.json'), bytes({ planSha256: fingerprint(plan), outputsSha256: await outputsFingerprint(root) }));
+  await assert.rejects(assertCompiledBuild(root, 'darwin-universal', env), /version\/revision/, 'a matching byte fingerprint cannot bless a wrong revision');
+  await writeFile(join(root, 'dist/build-info.json'), bytes(info));
+  await writeFile(join(state, 'compiled.json'), bytes({ planSha256: fingerprint(plan), outputsSha256: await outputsFingerprint(root) }));
   await assert.rejects(assertCompiledBuild(root, 'darwin-universal', {}), /requires OSIR/);
   await writeFile(join(root, 'dist/payload'), 'changed bytes'); await assert.rejects(assertCompiledBuild(root, 'darwin-universal', env), /fingerprint/);
   await writeFile(join(root, 'dist/payload'), 'compiled bytes');
@@ -91,6 +106,19 @@ test('--skip-build binds actual source, endpoint config, dependency resolution a
   await assert.rejects(assertCompiledBuild(root, 'darwin-universal', env), /fingerprint/);
   await writeFile(specPath, bytes(spec)); await writeFile(join(f.checkout, 'hello.txt'), 'changed source');
   await assert.rejects(assertCompiledBuild(root, 'darwin-universal', env), /changed/);
+});
+test('final compiled revision gate rejects missing, legacy, malformed or mismatched packaged metadata', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'osir-compiled-revision-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'dist'));
+  const plan = { version: '2.2.1', releaseRevision: 2 }, file = join(root, 'dist/build-info.json');
+  await assert.rejects(assertCompiledRevision(root, plan), { code: 'ENOENT' });
+  const info = { productId: 'osir-anywhere', desktopVersion: '2.2.1', revision: 2, serverVersion: '2.2.0' };
+  for (const value of [{ serverVersion: '2.2.0' }, { ...info, revision: 0 }, { ...info, revision: '2' }, { ...info, revision: 65536 },
+    { ...info, productId: 'other' }, { ...info, desktopVersion: '2.2.0' }, { ...info, releaseRevision: 2 }]) {
+    await writeFile(file, bytes(value)); await assert.rejects(assertCompiledRevision(root, plan), /revision/);
+  }
+  await writeFile(file, bytes(info)); await assertCompiledRevision(root, plan);
 });
 test('manifest public key ships at the exact Electron resources path and version is not rewritten', async () => {
   const pkg = await json(new URL('../package.json', import.meta.url));

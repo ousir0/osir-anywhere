@@ -87,16 +87,24 @@ export class BackendServer {
       this.streamEvents(request, response);
       return;
     }
+    const controller = new AbortController();
+    const cancel = () => { if (!response.writableEnded) controller.abort(); };
+    request.once("aborted", cancel);
+    response.once("close", cancel);
     try {
       const body = await readJsonBody(request);
-      const result = await this.route(request.method ?? "GET", url, body);
+      controller.signal.throwIfAborted();
+      const result = await this.route(request.method ?? "GET", url, body, controller.signal);
       sendJson(response, 200, result ?? null);
     } catch (error) {
       sendJson(response, 400, { error: errorMessage(error) });
+    } finally {
+      request.off("aborted", cancel);
+      response.off("close", cancel);
     }
   }
 
-  private async route(method: string, url: URL, body: Record<string, unknown>): Promise<unknown> {
+  private async route(method: string, url: URL, body: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const path = url.pathname;
     if (method === "GET") {
       if (path === "/state") return this.state.getConnectorState();
@@ -116,9 +124,9 @@ export class BackendServer {
       if (path === "/config") return this.state.saveConfig(body as never);
       if (path === "/settings") return this.state.saveSettings(body as never);
       if (path === "/onboarding/complete") return this.state.completeOnboarding(body);
-      if (path === "/start") return this.state.startConnector();
+      if (path === "/start") return this.state.startConnector(signal);
       if (path === "/stop") return this.state.stopConnector();
-      if (path === "/restart") return this.state.restartConnector();
+      if (path === "/restart") return this.state.restartConnector(signal);
       if (path === "/ownership/recheck") return this.state.recheckOwnership();
       if (path === "/environment/reset") return this.state.resetConnectorEnvironment();
       if (path === "/ownership/acquire") return this.state.acquireOwnershipOrThrow();
@@ -136,8 +144,8 @@ export class BackendServer {
         return { appended: true };
       }
       if (path === "/logs/export") return { count: await this.state.exportLogs(String(body.filePath ?? "")) };
-      if (path === "/device/create") return this.state.createAndConnect(body as never);
-      if (path === "/device/reconnect") return this.state.reconnectAndConnect(body as never);
+      if (path === "/device/create") return this.state.createAndConnect(body as never, signal);
+      if (path === "/device/reconnect") return this.state.reconnectAndConnect(body as never, signal);
       if (path === "/device/disconnect") return this.state.disconnectLocal(body as never);
       if (path === "/device/revoke") return this.state.revokeLocal(body as never);
       if (path === "/device/rename") return this.state.updateLocalBindingName(String(body.name ?? ""));
@@ -194,7 +202,7 @@ export class BackendServer {
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
-  if (response.writableEnded) return;
+  if (response.writableEnded || response.destroyed) return;
   const body = JSON.stringify(payload ?? null);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",

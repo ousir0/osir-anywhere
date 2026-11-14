@@ -2,15 +2,16 @@
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute, resolve } from 'node:path';
 import { appendFile, readFile } from 'node:fs/promises';
-import { check, cli, digest, immutableFile, bytes, isMain, json, separate, SHA } from './osir-anywhere-release-common.mjs';
+import { check, cli, digest, immutableFile, bytes, isMain, json, releaseRevision, separate, SHA } from './osir-anywhere-release-common.mjs';
 import { verifySource } from './osir-anywhere-source.mjs';
 import { CONFIG_KEYS } from './osir-anywhere-build.mjs';
 
 export function reviewedRecipe(raw, expectedSha256) {
   check(SHA.test(expectedSha256 ?? '') && digest(raw) === expectedSha256, 'Reviewed recipe raw-byte SHA-256 mismatch');
   const recipe = JSON.parse(raw);
-  check(recipe && !Array.isArray(recipe) && Object.keys(recipe).every(k => ['releaseId', 'config', 'windowsArm64Evidence', 'oauthEvidence'].includes(k)), 'Recipe cannot contain sourceSha256/generated paths/unknown fields');
+  check(recipe && !Array.isArray(recipe) && Object.keys(recipe).every(k => ['releaseId', 'releaseRevision', 'config', 'windowsArm64Evidence', 'oauthEvidence'].includes(k)), 'Recipe cannot contain sourceSha256/generated paths/unknown fields');
   check(typeof recipe.releaseId === 'string' && recipe.config && !Array.isArray(recipe.config) && Object.keys(recipe.config).every(k => CONFIG_KEYS.includes(k)), 'Recipe contains missing/unknown configuration');
+  releaseRevision(recipe.releaseRevision);
   return recipe;
 }
 export async function verifyOAuthEvidence(checkout, source, recipe) {
@@ -58,7 +59,7 @@ if (isMain(import.meta.url)) await cli(async () => {
   }
   await immutableFile(output, bytes({ checkout, checkoutHead: head, sourceSha256: source.sourceSha256, version: pkg.version,
     recipeSha256: digest(recipeBytes), dependencyLockSha256: process.env.OSIR_DEPENDENCY_LOCK_SHA256,
-    releaseId: recipe.releaseId, config: recipe.config, windowsArm64Evidence: recipe.windowsArm64Evidence,
+    releaseId: recipe.releaseId, releaseRevision: releaseRevision(recipe.releaseRevision), config: recipe.config, windowsArm64Evidence: recipe.windowsArm64Evidence,
     stateDirectory: join(process.env.RUNNER_TEMP, 'osir-anywhere-build') }));
   check(process.env.GITHUB_ENV, 'CI spec requires environment output');
   await appendFile(process.env.GITHUB_ENV, Object.entries(runnerEnvironment(process.env.RUNNER_TEMP)).map(([key, value]) => `${key}=${value}\n`).join(''));

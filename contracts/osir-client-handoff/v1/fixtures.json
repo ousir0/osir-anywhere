@@ -1,0 +1,2015 @@
+{
+  "syntheticOnly": true,
+  "signatureValidity": "INVALID: 64 zero bytes, never a real signed assertion",
+  "fixtureClock": 1800000001,
+  "flow": {
+    "nativeLaunch": "nativeLaunch",
+    "nativeHandshake": "nativeHandshake",
+    "authorizeRequest": "authorizeRequest",
+    "authorizeResponse": "authorizeResponse",
+    "nativeCodeDelivery": "nativeCodeDelivery",
+    "tokenRequest": "tokenRequest",
+    "tokenResponse": "tokenResponse",
+    "assertionHeader": "assertionHeader",
+    "assertionClaims": "assertionClaims",
+    "desktopExchangeRequest": "desktopExchangeRequest"
+  },
+  "schemaCases": [
+    {
+      "name": "nativeLaunch",
+      "definition": "nativeLaunch",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw"
+      }
+    },
+    {
+      "name": "nativeHandshake",
+      "definition": "nativeHandshake",
+      "valid": true,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorizeRequest",
+      "definition": "authorizeRequest",
+      "valid": true,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "nativeCodeDelivery",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "capabilitiesResponse",
+      "definition": "capabilitiesResponse",
+      "valid": true,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "enabled": true,
+          "protocolVersion": 1,
+          "recipientClientId": "osir-anywhere-desktop",
+          "targetOrigin": "https://anywhere.osirclaw.com",
+          "codeExpiresIn": 60,
+          "requiredScope": "account:read",
+          "allowedActions": [
+            "identity",
+            "connect-local",
+            "bootstrap-configured-tools"
+          ]
+        }
+      }
+    },
+    {
+      "name": "authorizeResponse",
+      "definition": "authorizeResponse",
+      "valid": true,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+          "expires_in": 60,
+          "recipient_client_id": "osir-anywhere-desktop",
+          "audience": "osir-anywhere-server"
+        }
+      }
+    },
+    {
+      "name": "tokenRequest",
+      "definition": "tokenRequest",
+      "valid": true,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "tokenResponse",
+      "definition": "tokenResponse",
+      "valid": true,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "token_type": "urn:osir:params:token-type:anywhere-handoff",
+          "expires_in": 60,
+          "audience": "osir-anywhere-server"
+        }
+      }
+    },
+    {
+      "name": "assertionHeader",
+      "definition": "assertionHeader",
+      "valid": true,
+      "value": {
+        "alg": "EdDSA",
+        "typ": "osir-anywhere-handoff+jwt",
+        "kid": "synthetic-contract-key-never-trust"
+      }
+    },
+    {
+      "name": "assertionClaims",
+      "definition": "assertionClaims",
+      "valid": true,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "browserAssertionHeader",
+      "definition": "browserAssertionHeader",
+      "valid": true,
+      "value": {
+        "alg": "EdDSA",
+        "typ": "osir-anywhere-login+jwt",
+        "kid": "synthetic-contract-key-never-trust"
+      }
+    },
+    {
+      "name": "browserAssertionClaims",
+      "definition": "browserAssertionClaims",
+      "valid": true,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "btNYSW3eoFpLfZMB_AA6HQ9sSxX-vISrxYrt4AYs76U",
+        "iat": 1800000000,
+        "exp": 1800000060
+      }
+    },
+    {
+      "name": "handoffProof",
+      "definition": "handoffProof",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "targetOrigin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "desktopExchangeRequest",
+      "definition": "desktopExchangeRequest",
+      "valid": true,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        }
+      }
+    },
+    {
+      "name": "desktopExchangeBrowser",
+      "definition": "desktopExchangeRequest",
+      "valid": true,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWxvZ2luK2p3dCJ9.eyJhdWQiOiJvc2lyLWFueXdoZXJlLXNlcnZlciIsImNsaWVudF9pZCI6Im9zaXItYW55d2hlcmUtZGVza3RvcCIsImV4cCI6MTgwMDAwMDA2MCwiaWF0IjoxODAwMDAwMDAwLCJpc3MiOiJodHRwczovL29zaXJjbGF3LmNvbSIsImp0aSI6ImJ0TllTVzNlb0ZwTGZaTUJfQUE2SFE5c1N4WC12SVNyeFlydDRBWXM3NlUiLCJzdWIiOiI5MDA3MTk5MjU0NzQwOTkzIn0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    {
+      "name": "capabilitiesDisabled",
+      "definition": "capabilitiesResponse",
+      "valid": true,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "enabled": false,
+          "protocolVersion": 1,
+          "recipientClientId": "osir-anywhere-desktop",
+          "targetOrigin": "https://anywhere.osirclaw.com",
+          "codeExpiresIn": 60,
+          "requiredScope": "account:read",
+          "allowedActions": [
+            "identity",
+            "connect-local",
+            "bootstrap-configured-tools"
+          ]
+        }
+      }
+    },
+    {
+      "name": "error-invalid_request",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 400,
+        "message": "Invalid handoff request",
+        "reason": "invalid_request"
+      }
+    },
+    {
+      "name": "error-invalid_source_session",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 401,
+        "message": "Invalid source session",
+        "reason": "invalid_source_session"
+      }
+    },
+    {
+      "name": "error-invalid_handoff",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 401,
+        "message": "Invalid handoff",
+        "reason": "invalid_handoff"
+      }
+    },
+    {
+      "name": "error-capability_unavailable",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 403,
+        "message": "Handoff unavailable",
+        "reason": "capability_unavailable"
+      }
+    },
+    {
+      "name": "error-receiver_untrusted",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 403,
+        "message": "Receiver not verified",
+        "reason": "receiver_untrusted"
+      }
+    },
+    {
+      "name": "error-consent_required",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 403,
+        "message": "Explicit Client action required",
+        "reason": "consent_required"
+      }
+    },
+    {
+      "name": "error-account_mismatch",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 409,
+        "message": "Account mismatch",
+        "reason": "account_mismatch"
+      }
+    },
+    {
+      "name": "error-rate_limited",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 429,
+        "message": "Handoff rate limit exceeded",
+        "reason": "rate_limited"
+      }
+    },
+    {
+      "name": "error-dependency_unavailable",
+      "definition": "errorResponse",
+      "valid": true,
+      "value": {
+        "code": 503,
+        "message": "Handoff dependency unavailable",
+        "reason": "dependency_unavailable"
+      }
+    },
+    {
+      "name": "ids-boundary-32",
+      "definition": "authorizeRequest",
+      "valid": true,
+      "value": {
+        "version": 1,
+        "flowId": "ffffffffffffffffffffffffffffffff",
+        "receiverInstanceId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "ids-boundary-128",
+      "definition": "authorizeRequest",
+      "valid": true,
+      "value": {
+        "version": 1,
+        "flowId": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "receiverInstanceId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "nativeLaunch-unknown-field",
+      "definition": "nativeLaunch",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "nativeHandshake-unknown-field",
+      "definition": "nativeHandshake",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "authorizeRequest-unknown-field",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "nativeCodeDelivery-unknown-field",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "unexpected": "synthetic-rejected",
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "capabilitiesResponse-unknown-field",
+      "definition": "capabilitiesResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "enabled": true,
+          "protocolVersion": 1,
+          "recipientClientId": "osir-anywhere-desktop",
+          "targetOrigin": "https://anywhere.osirclaw.com",
+          "codeExpiresIn": 60,
+          "requiredScope": "account:read",
+          "allowedActions": [
+            "identity",
+            "connect-local",
+            "bootstrap-configured-tools"
+          ]
+        },
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "authorizeResponse-unknown-field",
+      "definition": "authorizeResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+          "expires_in": 60,
+          "recipient_client_id": "osir-anywhere-desktop",
+          "audience": "osir-anywhere-server"
+        },
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "tokenRequest-unknown-field",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "tokenResponse-unknown-field",
+      "definition": "tokenResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "token_type": "urn:osir:params:token-type:anywhere-handoff",
+          "expires_in": 60,
+          "audience": "osir-anywhere-server"
+        },
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "assertionHeader-unknown-field",
+      "definition": "assertionHeader",
+      "valid": false,
+      "value": {
+        "alg": "EdDSA",
+        "typ": "osir-anywhere-handoff+jwt",
+        "kid": "synthetic-contract-key-never-trust",
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "assertionClaims-unknown-field",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "browserAssertionHeader-unknown-field",
+      "definition": "browserAssertionHeader",
+      "valid": false,
+      "value": {
+        "alg": "EdDSA",
+        "typ": "osir-anywhere-login+jwt",
+        "kid": "synthetic-contract-key-never-trust",
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "browserAssertionClaims-unknown-field",
+      "definition": "browserAssertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "btNYSW3eoFpLfZMB_AA6HQ9sSxX-vISrxYrt4AYs76U",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "handoffProof-unknown-field",
+      "definition": "handoffProof",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "desktopExchangeRequest-unknown-field",
+      "definition": "desktopExchangeRequest",
+      "valid": false,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        },
+        "unexpected": "synthetic-rejected"
+      }
+    },
+    {
+      "name": "authorize-wrong-version",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 2,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-short-flow",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "fffffffffffffffffffffffffffffff",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-long-flow",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-non-base64url-flow",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "fffffffffffffffffffffffffffffff/",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-short-receiver",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-long-receiver",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-noncanonical-state",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEB",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-padded-state",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI=",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-noncanonical-challenge",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaaB",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-plain-pkce",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "plain",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-web-recipient",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-web",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-explicit-port",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com:443",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-origin-path",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com/x",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-reordered-actions",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "bootstrap-configured-tools",
+          "connect-local",
+          "identity"
+        ]
+      }
+    },
+    {
+      "name": "authorize-actions-subset",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity"
+        ]
+      }
+    },
+    {
+      "name": "authorize-actions-extra",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools",
+          "keys:read"
+        ]
+      }
+    },
+    {
+      "name": "authorize-actions-duplicate",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "identity",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-null-actions",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": null
+      }
+    },
+    {
+      "name": "authorize-reject-accountId",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "accountId": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "authorize-reject-accessToken",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "accessToken": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "authorize-reject-refreshToken",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "refreshToken": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "authorize-reject-codeVerifier",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "codeVerifier": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "authorize-reject-apiKey",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "apiKey": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "authorize-reject-scope",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "scope": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "authorize-missing-state",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "authorize-case-alias",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "State": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI"
+      }
+    },
+    {
+      "name": "code-response-noncanonical-code",
+      "definition": "authorizeResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4B",
+          "expires_in": 60,
+          "recipient_client_id": "osir-anywhere-desktop",
+          "audience": "osir-anywhere-server"
+        }
+      }
+    },
+    {
+      "name": "code-response-extended-ttl",
+      "definition": "authorizeResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+          "expires_in": 61,
+          "recipient_client_id": "osir-anywhere-desktop",
+          "audience": "osir-anywhere-server"
+        }
+      }
+    },
+    {
+      "name": "code-response-wrong-recipient",
+      "definition": "authorizeResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+          "expires_in": 60,
+          "recipient_client_id": "osir-desktop",
+          "audience": "osir-anywhere-server"
+        }
+      }
+    },
+    {
+      "name": "code-response-wrong-audience",
+      "definition": "authorizeResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+          "expires_in": 60,
+          "recipient_client_id": "osir-anywhere-desktop",
+          "audience": "osir-account-api"
+        }
+      }
+    },
+    {
+      "name": "token-wrong-grant",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "authorization_code",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "token-short-verifier",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_t",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "token-long-verifier",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tBA",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "token-padded-verifier",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_t=",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "token-source-client",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com"
+      }
+    },
+    {
+      "name": "token-reject-camel-alias",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB"
+      }
+    },
+    {
+      "name": "token-reject-flow-id",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw"
+      }
+    },
+    {
+      "name": "token-response-login-type",
+      "definition": "tokenResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "token_type": "urn:osir:params:token-type:anywhere-login",
+          "expires_in": 60,
+          "audience": "osir-anywhere-server"
+        }
+      }
+    },
+    {
+      "name": "claims-array-audience",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": [
+          "osir-anywhere-server"
+        ],
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "claims-numeric-sub",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": 9007199254740993,
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "claims-zero-sub",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "0",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "claims-secret",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "refresh_token": "SYNTHETIC-REJECTED"
+      }
+    },
+    {
+      "name": "claims-long-receiver",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      }
+    },
+    {
+      "name": "header-login-typ",
+      "definition": "assertionHeader",
+      "valid": false,
+      "value": {
+        "alg": "EdDSA",
+        "typ": "osir-anywhere-login+jwt",
+        "kid": "synthetic-contract-key-never-trust"
+      }
+    },
+    {
+      "name": "header-untrusted-jku",
+      "definition": "assertionHeader",
+      "valid": false,
+      "value": {
+        "alg": "EdDSA",
+        "typ": "osir-anywhere-handoff+jwt",
+        "kid": "synthetic-contract-key-never-trust",
+        "jku": "https://synthetic.invalid/jwks"
+      }
+    },
+    {
+      "name": "exchange-incomplete-proof",
+      "definition": "desktopExchangeRequest",
+      "valid": false,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw"
+        }
+      }
+    },
+    {
+      "name": "exchange-null-proof",
+      "definition": "desktopExchangeRequest",
+      "valid": false,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": null
+      }
+    },
+    {
+      "name": "exchange-extra-discriminator",
+      "definition": "desktopExchangeRequest",
+      "valid": false,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        },
+        "kind": "handoff"
+      }
+    },
+    {
+      "name": "exchange-proof-extra-account",
+      "definition": "desktopExchangeRequest",
+      "valid": false,
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com",
+          "accountId": "synthetic"
+        }
+      }
+    },
+    {
+      "name": "launch-reject-code",
+      "definition": "nativeLaunch",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w"
+      }
+    },
+    {
+      "name": "delivery-expired",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 0,
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "error-mismatched-status",
+      "definition": "errorResponse",
+      "valid": false,
+      "value": {
+        "code": 200,
+        "message": "Invalid handoff",
+        "reason": "invalid_handoff"
+      }
+    },
+    {
+      "name": "capabilities-old-scope-policy",
+      "definition": "capabilitiesResponse",
+      "valid": false,
+      "value": {
+        "code": 0,
+        "message": "success",
+        "data": {
+          "enabled": true,
+          "protocolVersion": 1,
+          "recipientClientId": "osir-anywhere-desktop",
+          "targetOrigin": "https://anywhere.osirclaw.com",
+          "codeExpiresIn": 60,
+          "requiredScope": "anywhere:handoff",
+          "allowedActions": [
+            "identity",
+            "connect-local",
+            "bootstrap-configured-tools"
+          ]
+        }
+      }
+    },
+    {
+      "name": "delivery-tools-subset-0",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": []
+      }
+    },
+    {
+      "name": "delivery-tools-subset-1",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-subset-2",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "codex"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-subset-3",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-subset-4",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude",
+          "codex"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-subset-5",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-subset-6",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-subset-7",
+      "definition": "nativeCodeDelivery",
+      "valid": true,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-duplicate",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude",
+          "claude"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-wrong-order",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "codex",
+          "claude"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-unknown",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "SYNTHETIC-UNKNOWN"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-overflow",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-null",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": null
+      }
+    },
+    {
+      "name": "delivery-tools-not-array",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": "claude"
+      }
+    },
+    {
+      "name": "delivery-tools-nested",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59,
+        "configuredToolTypes": [
+          {
+            "type": "claude",
+            "key": "SYNTHETIC-REJECTED"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delivery-tools-missing",
+      "definition": "nativeCodeDelivery",
+      "valid": false,
+      "value": {
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "expiresIn": 59
+      }
+    },
+    {
+      "name": "authorizeRequest-reject-native-tools",
+      "definition": "authorizeRequest",
+      "valid": false,
+      "value": {
+        "version": 1,
+        "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "codeChallenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "codeChallengeMethod": "S256",
+        "recipientClientId": "osir-anywhere-desktop",
+        "targetOrigin": "https://anywhere.osirclaw.com",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "tokenRequest-reject-native-tools",
+      "definition": "tokenRequest",
+      "valid": false,
+      "value": {
+        "grant_type": "urn:osir:params:grant-type:anywhere-handoff",
+        "client_id": "osir-anywhere-desktop",
+        "code": "z13GaBLOfnQUEnyb0sz6h-ABIbCdUK8RMg4v6n8hc4w",
+        "code_verifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+        "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    },
+    {
+      "name": "assertionClaims-reject-native-tools",
+      "definition": "assertionClaims",
+      "valid": false,
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ],
+        "configuredToolTypes": [
+          "claude",
+          "codex",
+          "dsh"
+        ]
+      }
+    }
+  ],
+  "semanticInvalidCases": [
+    {
+      "name": "handoff-typ-without-proof",
+      "definition": "desktopExchangeRequest",
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "expectedRule": "typ_branch"
+    },
+    {
+      "name": "login-typ-with-proof",
+      "definition": "desktopExchangeRequest",
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWxvZ2luK2p3dCJ9.eyJhdWQiOiJvc2lyLWFueXdoZXJlLXNlcnZlciIsImNsaWVudF9pZCI6Im9zaXItYW55d2hlcmUtZGVza3RvcCIsImV4cCI6MTgwMDAwMDA2MCwiaWF0IjoxODAwMDAwMDAwLCJpc3MiOiJodHRwczovL29zaXJjbGF3LmNvbSIsImp0aSI6ImJ0TllTVzNlb0ZwTGZaTUJfQUE2SFE5c1N4WC12SVNyeFlydDRBWXM3NlUiLCJzdWIiOiI5MDA3MTk5MjU0NzQwOTkzIn0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        }
+      },
+      "expectedRule": "typ_branch"
+    },
+    {
+      "name": "wrong-state",
+      "definition": "desktopExchangeRequest",
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "XivcUkMZTZ9Uy19Sv5j2mXptKkbodnHjvProW4IVm8w",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        }
+      },
+      "expectedRule": "state_hash"
+    },
+    {
+      "name": "wrong-verifier",
+      "definition": "desktopExchangeRequest",
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        }
+      },
+      "expectedRule": "pkce"
+    },
+    {
+      "name": "wrong-flow",
+      "definition": "desktopExchangeRequest",
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "swbIH-iVQSOq8TdcbgODLVNxU5g-4yFvDpxJYtDyJoE",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        }
+      },
+      "expectedRule": "flow"
+    },
+    {
+      "name": "wrong-receiver",
+      "definition": "desktopExchangeRequest",
+      "value": {
+        "assertion": "eyJhbGciOiJFZERTQSIsImtpZCI6InN5bnRoZXRpYy1jb250cmFjdC1rZXktbmV2ZXItdHJ1c3QiLCJ0eXAiOiJvc2lyLWFueXdoZXJlLWhhbmRvZmYrand0In0.eyJhY3Rpb25zIjpbImlkZW50aXR5IiwiY29ubmVjdC1sb2NhbCIsImJvb3RzdHJhcC1jb25maWd1cmVkLXRvb2xzIl0sImF1ZCI6Im9zaXItYW55d2hlcmUtc2VydmVyIiwiY2xpZW50X2lkIjoib3Npci1hbnl3aGVyZS1kZXNrdG9wIiwiY29kZV9jaGFsbGVuZ2UiOiI0M2NjV1pQV3ZidmxZemhVVFRfd2U2NzJEYUg0Wjdoa24xdWNseEVDYWEwIiwiY29kZV9jaGFsbGVuZ2VfbWV0aG9kIjoiUzI1NiIsImV4cCI6MTgwMDAwMDA2MCwiZmxvd19pZCI6ImJPeVVQMDlsb3hIdGFBTWs3eEJGVGFSc0I1dE9ZdXBxeTBFQzBaaVdNcXciLCJpYXQiOjE4MDAwMDAwMDAsImlzcyI6Imh0dHBzOi8vb3NpcmNsYXcuY29tIiwianRpIjoia1VHRkwyeGlwMTNDV0FRLWpzWTNRT2c1eHJiYm1NMXpyZnBBSGRrS3hUcyIsInJlY2VpdmVyX2luc3RhbmNlX2lkIjoib1dxQnctSTNtaTMyYzJjamR3ano4OGRHU2VRTmRBanpzMTlfSXVwV2VDSSIsInN0YXRlX2hhc2giOiJFUWltVElqVjlQMjAxQ01kZ3NUTENneWlneFZEZHotNmNncnlrdVhMZGFnIiwic3ViIjoiOTAwNzE5OTI1NDc0MDk5MyIsInRhcmdldF9vcmlnaW4iOiJodHRwczovL2FueXdoZXJlLm9zaXJjbGF3LmNvbSJ9.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "handoff": {
+          "flowId": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+          "state": "kYAHmt1G94OXxu96rNdQX6rkLdgaaeqctDwQCjBDtEI",
+          "receiverInstanceId": "NQP1QWSDyJlWE8X6Ol_XaID9ETJlbV5k9UdhxZjVb5c",
+          "codeVerifier": "2bsIU5gPqQkIzQiUz3T6HhpJLwl23IiruBbfkYtT9v6HNG1bCmrBpL9IH7Ba0_tB",
+          "targetOrigin": "https://anywhere.osirclaw.com"
+        }
+      },
+      "expectedRule": "receiver"
+    },
+    {
+      "name": "extended-assertion-lifetime",
+      "definition": "assertionClaims",
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9007199254740993",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000061,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      },
+      "expectedRule": "lifetime"
+    },
+    {
+      "name": "subject-outside-int64",
+      "definition": "assertionClaims",
+      "value": {
+        "iss": "https://osirclaw.com",
+        "aud": "osir-anywhere-server",
+        "sub": "9223372036854775808",
+        "client_id": "osir-anywhere-desktop",
+        "jti": "kUGFL2xip13CWAQ-jsY3QOg5xrbbmM1zrfpAHdkKxTs",
+        "iat": 1800000000,
+        "exp": 1800000060,
+        "flow_id": "bOyUP09loxHtaAMk7xBFTaRsB5tOYupqy0EC0ZiWMqw",
+        "receiver_instance_id": "oWqBw-I3mi32c2cjdwjz88dGSeQNdAjzs19_IupWeCI",
+        "state_hash": "EQimTIjV9P201CMdgsTLCgyigxVDdz-6cgrykuXLdag",
+        "target_origin": "https://anywhere.osirclaw.com",
+        "code_challenge": "43ccWZPWvbvlYzhUTT_we672DaH4Z7hkn1uclxECaa0",
+        "code_challenge_method": "S256",
+        "actions": [
+          "identity",
+          "connect-local",
+          "bootstrap-configured-tools"
+        ]
+      },
+      "expectedRule": "subject_range"
+    }
+  ]
+}

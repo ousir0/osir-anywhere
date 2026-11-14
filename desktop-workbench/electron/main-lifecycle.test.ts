@@ -17,6 +17,7 @@ const source = ts.createSourceFile(
   true,
 );
 function loadFunctions(names: string[], globals: Record<string, unknown>) {
+  globals.clientHandoff ??= null;
   const code = source.statements
     .filter((statement) => ts.isFunctionDeclaration(statement) && names.includes(statement.name?.text ?? ""))
     .map((statement) => statement.getText(source))
@@ -383,6 +384,7 @@ test("a backend that stops after ready opens the gate, and its recheck starts a 
 });
 
 function loadIpcHandler(channel: string, globals: Record<string, unknown>) {
+  globals.clientHandoff ??= null;
   let handler: ts.Expression | undefined;
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node) && node.expression.getText(source) === "ipcMain.handle" &&

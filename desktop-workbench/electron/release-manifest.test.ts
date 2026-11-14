@@ -33,6 +33,19 @@ test("RSA-SHA256 verifies the exact signed bytes and preserves compatibility met
   assert.throws(() => verifyReleaseManifest(original, other), /签名/);
 });
 
+test("optional revision is a signed bounded integer; omission preserves legacy manifests", () => {
+  assert.equal(Object.hasOwn(verifyReleaseManifest(envelope(manifest()), pem), "revision"), false);
+  for (const revision of [0, 1, 2, 65535]) {
+    assert.equal(verifyReleaseManifest(envelope(manifest({ revision })), pem).revision, revision);
+  }
+  for (const revision of [-1, 0.5, null, "1", true, {}, [], 65536, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => verifyReleaseManifest(envelope(manifest({ revision })), pem));
+  }
+  const original = envelope(manifest({ revision: 1 }));
+  assert.throws(() => verifyReleaseManifest({ ...original,
+    payload: Buffer.from(JSON.stringify(manifest({ revision: 2 }))).toString("base64") }, pem), /签名/);
+});
+
 test("missing, weak, private and non-RSA keys fail closed", () => {
   const weak = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
   const ec = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).publicKey;
