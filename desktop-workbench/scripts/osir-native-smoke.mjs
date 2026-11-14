@@ -36,6 +36,7 @@ import { homedir, hostname, userInfo } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { inspectSystemSignature } from './osir-anywhere-system-signature.mjs';
+import { runObservedWindowsNsis } from './osir-windows-native-observation.mjs';
 
 const SHA = /^[a-f0-9]{64}$/;
 const COMMIT = /^[a-f0-9]{40}$/;
@@ -420,7 +421,7 @@ export class NativeAdapter {
       } finally { if (attached) await this.run('/usr/bin/hdiutil', ['detach', mount], 'dmg-detach'); }
     } else {
       // NSIS /D= must be the final argument. Run the actual installer, not 7zip.
-      await this.run(installer, ['/S', '/currentuser', `/D=${destination}`], 'nsis-install', { timeout: 180000 });
+      await runObservedWindowsNsis(this, installer, destination, 'nsis-install', { command });
       executable = join(destination, `${PRODUCT}.exe`); resources = join(destination, 'resources');
       const env = { ...this.env, OSIR_SMOKE_EXE: executable };
       metadata = JSON.parse(await this.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$v=(Get-Item -LiteralPath $env:OSIR_SMOKE_EXE).VersionInfo;@{ProductName=$v.ProductName;ProductVersion=$v.ProductVersion;FileVersion=$v.FileVersion}|ConvertTo-Json -Compress'], 'installed-pe-metadata', { env }));

@@ -10,6 +10,7 @@ import { hostedRunnerProvenance, nativeGuiProvenance, requireHostedRunner } from
 import { inspectSystemSignature } from './osir-anywhere-system-signature.mjs';
 import { bytes, check, fingerprint, within } from './osir-anywhere-release-common.mjs';
 import { BASELINE_VERSION, FINAL_VERSION, observeUpgradeHardware, runAcceptance } from './osir-native-upgrade-acceptance.mjs';
+import { runObservedWindowsNsis } from './osir-windows-native-observation.mjs';
 
 const SELF = fileURLToPath(new URL('./osir-native-upgrade-acceptance.mjs', import.meta.url));
 const RUNTIME = fileURLToPath(import.meta.url);
@@ -262,7 +263,7 @@ export class UpgradeAdapter extends NativeAdapter {
   }
   async installWindows(installer, artifact, version, label) {
     const destination = join(this.work, 'installed'); await mkdir(destination, { recursive: true });
-    await this.run(installer, ['/S', '/currentuser', `/D=${destination}`], `${label}-nsis-install`, { timeout: 180000 });
+    await runObservedWindowsNsis(this, installer, destination, `${label}-nsis-install`, { command });
     const executable = join(destination, `${PRODUCT}.exe`), resources = join(destination, 'resources');
     const env = { ...this.env, OSIR_UPGRADE_EXE: executable };
     const metadata = JSON.parse(await this.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference='Stop';$v=(Get-Item -LiteralPath $env:OSIR_UPGRADE_EXE).VersionInfo;@{ProductName=$v.ProductName;ProductVersion=$v.ProductVersion;FileVersion=$v.FileVersion}|ConvertTo-Json -Compress"], `${label}-pe-metadata`, { env }));

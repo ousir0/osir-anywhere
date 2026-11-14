@@ -50,6 +50,7 @@ import { homedir, hostname, networkInterfaces, tmpdir, userInfo } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertNativeMachine, bindInputs, command, fileIdentity, fingerprintTree, NativeAdapter, runSmoke, smokeEnvironment, validateSpec, verifyCleanAccount } from './osir-native-smoke.mjs';
+import { observeWindowsGui } from './osir-windows-native-observation.mjs';
 
 // "localhost" is the supported SBPL selector, not itself proof of loopback-only
 // enforcement. Real controls below detect its broader local-interface meaning.
@@ -247,6 +248,11 @@ async function probeProcess(options) {
   return proof;
 }
 
+export async function observeSmokeGui(env, provision, stage, { probe = nativeGuiProvenance, platform = process.platform } = {}) {
+  if (platform !== 'win32') return probe(env);
+  return observeWindowsGui(() => probe(env), (name, raw) => writeFile(join(provision, name), raw, { flag: 'wx', mode: 0o600 }), stage);
+}
+
 export async function verifyProvisionedIsolation(record) {
   const e = record.enforcement;
   if (record.runnerMode === 'disposable-clean-runner') {
@@ -254,7 +260,7 @@ export async function verifyProvisionedIsolation(record) {
     check(record.networkPolicy === 'unrestricted-no-product-credentials' && record.networkIsolationClaimed === false && e?.kind === 'github-hosted-clean-runner' && e.processId === process.pid && e.provisionerSha256 === (await fileIdentity(SELF)).sha256 && record.jobId === `${process.env.GITHUB_RUN_ID}/${process.env.GITHUB_RUN_ATTEMPT ?? '1'}`, 'Clean-runner provenance must come from this live GitHub-hosted helper process');
     const metadata = hostedRunnerProvenance();
     check(JSON.stringify(record.hostedRunner) === JSON.stringify(metadata), 'Hosted-runner metadata changed');
-    const gui = await nativeGuiProvenance(childEnvironment(dirname(e.provenancePath)));
+    const gui = await observeSmokeGui(childEnvironment(dirname(e.provenancePath)), dirname(e.provenancePath), 'runner-gui-recheck');
     check((await fileIdentity(e.provenancePath)).sha256 === e.provenanceSha256, 'GUI provenance changed');
     return { ...e, liveGuiRecheck: gui };
   }
@@ -271,7 +277,7 @@ export async function verifyProvisionedIsolation(record) {
 async function cleanRunnerSmoke(spec, provision, output) {
   await requireHostedRunner();
   const env = childEnvironment(provision); await mkdir(env.TMPDIR, { mode: 0o700 });
-  const gui = await nativeGuiProvenance(env), provenancePath = join(provision, 'gui-provenance.json'); await save(provenancePath, gui);
+  const gui = await observeSmokeGui(env, provision, 'runner-gui'), provenancePath = join(provision, 'gui-provenance.json'); await save(provenancePath, gui);
   const record = { schemaVersion: 1, kind: 'disposable-native-runner', disposable: true, runnerMode: 'disposable-clean-runner', networkPolicy: 'unrestricted-no-product-credentials', networkIsolationClaimed: false,
     user: userInfo().username, home: await realpath(homedir()), hostname: hostname(), nativeMachine: spec.runner.nativeMachine,
     jobId: `${process.env.GITHUB_RUN_ID}/${process.env.GITHUB_RUN_ATTEMPT ?? '1'}`, createdAt: new Date().toISOString(), hostedRunner: hostedRunnerProvenance(),
