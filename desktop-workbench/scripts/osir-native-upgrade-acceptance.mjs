@@ -25,6 +25,24 @@ export const BOUNDARIES = [
   'No real accounts, models, OAuth, interactive installation confirmation or bypass of OS protections is tested.',
 ];
 
+// Reuse the shared native probe verbatim. A Windows timeout remains failed
+// evidence, even if it contains exit 0 / JSON; only a fresh completed probe can
+// establish hardware identity. This also covers preparation, before packaging.
+export async function observeUpgradeHardware(context, { Adapter = NativeAdapter, platform = process.platform } = {}) {
+  if (platform !== 'win32') return new Adapter(context).hardware();
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const probe = new Adapter({ ...context, evidence: (name, raw) => context.evidence(`hardware-attempt-${attempt}-${name}`, raw) });
+    const run = probe.run.bind(probe);
+    probe.run = (executable, args, label, extra = {}) => run(executable, args, label, {
+      ...extra, ...(label === 'hardware-machine' ? { timeout: attempt === 1 ? 60000 : 120000 } : {}),
+    });
+    try { return await probe.hardware(); }
+    catch (error) {
+      if (attempt === 2 || error.message !== 'Native command timed out') throw error;
+    }
+  }
+}
+
 export function validateSpec(spec, mode = 'run') {
   validateSmokeSpec(spec, { requireIsolation: false });
   check(spec.expected.version === FINAL_VERSION, 'This controlled acceptance requires final Desktop 2.2.0');
@@ -142,7 +160,7 @@ export async function prepareBaseline(spec, output) {
     for (const file of source.files) await copyIndependent(join(checkout, file.path), join(copy, file.path), checkout, copy);
     const copiedRoot = join(copy, 'desktop-workbench');
     const env = { ...buildEnvironment(process.env, {}), CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
-    const hardware = await new NativeAdapter({ env, work: output, evidence }).hardware();
+    const hardware = await observeUpgradeHardware({ env, work: output, evidence });
     assertNativeMachine(spec.runner.nativeMachine, process.platform, process.arch, hardware.arch, hardware.translated);
     await evidence('native-gui.json', bytes(await nativeGuiProvenance(env)));
     let extracted;

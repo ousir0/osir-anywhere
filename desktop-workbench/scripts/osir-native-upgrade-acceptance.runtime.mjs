@@ -9,7 +9,7 @@ import { asarJson, assertNativeMachine, binaryArchitectures, command, fileIdenti
 import { hostedRunnerProvenance, nativeGuiProvenance, requireHostedRunner } from './osir-native-smoke-provision.mjs';
 import { inspectSystemSignature } from './osir-anywhere-system-signature.mjs';
 import { bytes, check, fingerprint, within } from './osir-anywhere-release-common.mjs';
-import { BASELINE_VERSION, FINAL_VERSION, runAcceptance } from './osir-native-upgrade-acceptance.mjs';
+import { BASELINE_VERSION, FINAL_VERSION, observeUpgradeHardware, runAcceptance } from './osir-native-upgrade-acceptance.mjs';
 
 const SELF = fileURLToPath(new URL('./osir-native-upgrade-acceptance.mjs', import.meta.url));
 const RUNTIME = fileURLToPath(import.meta.url);
@@ -96,6 +96,57 @@ const ELECTRON = `${REQUIRE}('electron')`;
 export const SEED_SETTINGS = { openAtLogin: false, startConnectorOnLaunch: false, silentLaunch: false, notificationsEnabled: false,
   uvPath: '', pythonPath: '', uvPypiIndexUrl: '', uvPythonInstallMirror: '', logRetentionDays: 37, logRetainChunks: 13, logChunkSizeKb: 768 };
 
+// The Node inspector can accept commands before Electron installs its module
+// loader. Serialize the probe into the real packaged process; do not retry
+// arbitrary evaluation exceptions or substitute a harness Electron module.
+export function packagedWindowState() {
+  const phase = { processType: process.type ?? null, electron: process.versions.electron ?? null };
+  if (process.type !== 'browser' || !process.versions.electron) return { ready: false, reason: 'electron-browser-not-ready', phase };
+  const require = process.getBuiltinModule('module').createRequire(process.resourcesPath + '/app.asar/package.json');
+  let electron;
+  try { electron = require('electron'); }
+  catch (error) {
+    if (error.code === 'MODULE_NOT_FOUND' && error.message.split('\n')[0] === "Cannot find module 'electron'") return { ready: false, reason: 'electron-module-not-ready', phase, error: { code: error.code, message: error.message.slice(0, 400) } };
+    throw error;
+  }
+  const { app, BrowserWindow } = electron;
+  if (!app.isReady()) return { ready: false, reason: 'electron-app-not-ready', phase };
+  return { ready: true, state: { pid: process.pid, name: app.getName(), version: app.getVersion(), packaged: app.isPackaged,
+    electron: process.versions.electron, arch: process.arch, platform: process.platform, resources: process.resourcesPath,
+    home: app.getPath('home'), userData: app.getPath('userData'),
+    windows: BrowserWindow.getAllWindows().map(w => ({ id: w.id, visible: w.isVisible(), destroyed: w.isDestroyed(), loading: w.webContents.isLoading(),
+      width: w.getBounds().width, height: w.getBounds().height, url: w.webContents.getURL(), rendererPid: w.webContents.getOSProcessId() })) } };
+}
+
+export async function waitForUpgradeWindow(inspector, context, deadline, observe = async () => {}) {
+  const observations = []; let state;
+  try {
+    while (Date.now() < deadline) {
+      const observation = await inspector.evaluate(`(${packagedWindowState.toString()})()`);
+      observations.push(observation);
+      if (observation?.ready === true) {
+        state = observation.state;
+        try { return { state, window: validateWindow(state, context) }; } catch { /* A window may still be loading. */ }
+      } else check(observation?.ready === false && ['electron-browser-not-ready', 'electron-module-not-ready', 'electron-app-not-ready'].includes(observation.reason), 'Invalid packaged startup observation');
+      await pause(250);
+    }
+    if (state) validateWindow(state, context);
+    throw new Error('Packaged Electron startup readiness timed out');
+  } finally { await observe(observations); }
+}
+
+// Use the existing trusted-renderer API, which calls the product's complete
+// requestQuit() cleanup. app.quit() alone asks for confirmation. Schedule the
+// API call so the inspector receives an acknowledgement before the window is
+// destroyed; an IPC reply from that destroyed renderer is not an exit proof.
+export async function requestUpgradeQuit(inspector, windowId) {
+  check(Number.isSafeInteger(windowId) && windowId > 0, 'Owned window ID required for graceful quit');
+  const renderer = `(() => { if(typeof window.desktopWorkbench?.ownership?.quit !== 'function') throw new Error('Packaged ownership.quit API missing'); setTimeout(() => { Promise.resolve(window.desktopWorkbench.ownership.quit()).catch(() => {}); }, 100); return {requested:true,route:'desktopWorkbench.ownership.quit'}; })()`;
+  const result = await inspector.evaluate(`(()=>{const w=${ELECTRON}.BrowserWindow.fromId(${windowId});return w.webContents.executeJavaScript(${JSON.stringify(renderer)});})()`);
+  check(result?.requested === true && result.route === 'desktopWorkbench.ownership.quit', 'Packaged graceful quit was not requested');
+  return result;
+}
+
 // Same renderer observation and shared validator as the corrected smoke launch.
 // A visible Electron window alone cannot certify that the welcome page loaded.
 export async function waitForUpgradeWelcome(inspector, windowId, deadline, observe = async () => {}) {
@@ -109,31 +160,47 @@ export async function waitForUpgradeWelcome(inspector, windowId, deadline, obser
   } finally { await observe(welcome ?? { ready: false, branded: false, action: null }); }
 }
 
-async function ownedExit(child, inspector, graceful, env) {
+export async function ownedExit(child, inspector, graceful, env, { windowId, observe = async () => {}, graceMs = 10000 } = {}) {
   let exited = child.exitCode !== null || child.signalCode !== null;
+  let request, quitError, forced = false;
   const wait = async milliseconds => {
     const end = Date.now() + milliseconds;
     while (!exited && Date.now() < end) { await pause(100); exited = child.exitCode !== null || child.signalCode !== null; }
   };
-  if (inspector) { await inspector.evaluate(`${ELECTRON}.app.quit();true`).catch(() => {}); inspector.close(); await wait(10000); }
-  const clean = exited && child.exitCode === 0;
-  if (!exited && child.pid) {
-    // Only the process group we spawned; no product-name shutdown or OS bypass.
-    if (process.platform === 'win32') {
-      const result = await command(join(process.env.SystemRoot || 'C:\\Windows', 'System32/taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { env, timeout: 10000 });
-      check(result.code === 0 || child.exitCode !== null, 'Could not stop owned Electron PID'); await wait(3000);
-    } else {
-      try { process.kill(-child.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-      await wait(1000);
-      if (!exited) { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } await wait(3000); }
-    }
+  if (inspector) {
+    try {
+      if (graceful) request = await requestUpgradeQuit(inspector, windowId);
+      else await inspector.evaluate(`${ELECTRON}.app.quit();true`);
+    } catch (error) { quitError = String(error.message); }
+    finally { inspector.close(); }
+    await wait(graceMs);
   }
-  check(!graceful || clean, 'Owned Electron did not exit cleanly; data durability unproven');
+  const clean = exited && child.exitCode === 0;
+  let cleanupError;
+  try {
+    if (!exited && child.pid) {
+      forced = true;
+      // Only the process group we spawned; no product-name shutdown or OS bypass.
+      if (process.platform === 'win32') {
+        const result = await command(join(process.env.SystemRoot || 'C:\\Windows', 'System32/taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { env, timeout: 10000 });
+        check(result.code === 0 || child.exitCode !== null, 'Could not stop owned Electron PID'); await wait(3000);
+      } else {
+        try { process.kill(-child.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+        await wait(1000);
+        if (!exited) { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } await wait(3000); }
+      }
+    }
+  } catch (error) { cleanupError = String(error.message); throw error; }
+  finally {
+    await observe({ route: graceful ? 'desktopWorkbench.ownership.quit' : 'app.quit', requested: request ?? null, requestError: quitError ?? null,
+      exitCode: child.exitCode, signal: child.signalCode, clean, forced, cleanupError: cleanupError ?? null });
+  }
+  check(!graceful || (request?.requested === true && !quitError && clean && !forced), 'Owned Electron did not exit cleanly; data durability unproven');
 }
 
 export class UpgradeAdapter extends NativeAdapter {
   async hardware() {
-    const machine = await super.hardware();
+    const machine = await observeUpgradeHardware(this);
     assertNativeMachine(this.spec.runner.nativeMachine, process.platform, process.arch, machine.arch, machine.translated);
   }
   async installBaseline() {
@@ -200,7 +267,7 @@ export class UpgradeAdapter extends NativeAdapter {
   }
   async session(installed, label, action) {
     const child = spawn(installed.executable, ['--inspect=127.0.0.1:0'], { cwd: this.work, env: this.env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
-    let log = '', url, error, inspector, completed = false;
+    let log = '', url, error, inspector, window, completed = false;
     child.on('error', value => { error = value; });
     for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => {
       if (Buffer.byteLength(log) < LIMIT) log += chunk;
@@ -210,13 +277,9 @@ export class UpgradeAdapter extends NativeAdapter {
       const deadline = Date.now() + 60000;
       while (!url) { check(!error && child.exitCode === null && child.signalCode === null && Date.now() < deadline, 'Installed Electron failed to start'); await pause(100); }
       inspector = await Inspector.connect(url);
-      let state, window;
-      while (Date.now() < deadline) {
-        state = await inspector.evaluate(`(()=>{const{app,BrowserWindow}=${ELECTRON};return{pid:process.pid,name:app.getName(),version:app.getVersion(),packaged:app.isPackaged,electron:process.versions.electron,arch:process.arch,platform:process.platform,resources:process.resourcesPath,home:app.getPath('home'),userData:app.getPath('userData'),windows:BrowserWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),destroyed:w.isDestroyed(),loading:w.webContents.isLoading(),width:w.getBounds().width,height:w.getBounds().height,url:w.webContents.getURL(),rendererPid:w.webContents.getOSProcessId()}))}})()`);
-        try { window = validateWindow(state, { ...this, version: installed.version, nativeMachine: this.spec.runner.nativeMachine, resources: installed.resources, pid: child.pid }); break; }
-        catch { await pause(250); }
-      }
-      window = validateWindow(state, { ...this, version: installed.version, nativeMachine: this.spec.runner.nativeMachine, resources: installed.resources, pid: child.pid });
+      const ready = await waitForUpgradeWindow(inspector, { ...this, version: installed.version, nativeMachine: this.spec.runner.nativeMachine, resources: installed.resources, pid: child.pid }, deadline,
+        observations => this.evidence(`${label}-startup-observations.json`, bytes(observations)));
+      const state = ready.state; window = ready.window;
       check(state.userData === this.expectedUserData, 'App userData is not the clean runner product directory');
       await waitForUpgradeWelcome(inspector, window.id, deadline, welcome => this.evidence(`${label}-renderer-welcome.json`, bytes(welcome)));
       const png = await inspector.evaluate(`(async()=>{const w=${ELECTRON}.BrowserWindow.fromId(${window.id});return(await w.webContents.capturePage()).toPNG().toString('base64')})()`);
@@ -224,7 +287,7 @@ export class UpgradeAdapter extends NativeAdapter {
       await this.evidence(`${label}-window.png`, image); await this.evidence(`${label}-window.json`, bytes(state));
       const result = await action(inspector, state, window); completed = true; return result;
     } finally {
-      try { await ownedExit(child, inspector, completed, this.env); }
+      try { await ownedExit(child, inspector, completed, this.env, { windowId: window?.id, observe: result => this.evidence(`${label}-exit.json`, bytes(result)) }); }
       finally { await this.evidence(`${label}-startup.log`, log || String(error?.message ?? 'No output')); }
     }
   }

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
@@ -11,14 +12,112 @@ import { verify } from 'node:crypto';
 import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 import { fileIdentity, fingerprintTree } from './osir-native-smoke.mjs';
 import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
-import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
-import { observeUpgradeGui, packagedDiscoveryProbe, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome } from './osir-native-upgrade-acceptance.runtime.mjs';
+import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, observeUpgradeHardware, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
+import { observeUpgradeGui, ownedExit, packagedDiscoveryProbe, packagedWindowState, requestUpgradeQuit, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome, waitForUpgradeWindow } from './osir-native-upgrade-acceptance.runtime.mjs';
 import { electronFromLock, reuseExtractedRuntime, validateElectronFramework } from './osir-native-upgrade-acceptance.extract.mjs';
 import { collectRaw, discoveryTestSources, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
 import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
 
 const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
 const identity = data => ({ size: data.length, sha256: digest(data) });
+
+test('packaged startup records browser bootstrap and exact missing-electron phases without hiding other exceptions', () => {
+  let calls = 0, ready = false, moduleError = Object.assign(new Error("Cannot find module 'electron'\nRequire stack:\n- synthetic/app.asar/package.json"), { code: 'MODULE_NOT_FOUND' });
+  const electron = { app: { isReady: () => ready, getName: () => 'OSIR Anywhere', getVersion: () => '2.1.0', isPackaged: true, getPath: () => '/synthetic' }, BrowserWindow: { getAllWindows: () => [] } };
+  const runtimeProcess = { type: undefined, versions: { electron: '39.8.10' }, resourcesPath: '/synthetic', getBuiltinModule: () => ({ createRequire: () => () => { calls++; if (moduleError) throw moduleError; return electron; } }) };
+  const evaluate = () => JSON.parse(JSON.stringify(vm.runInNewContext(`(${packagedWindowState.toString()})()`, { process: runtimeProcess })));
+  assert.equal(evaluate().reason, 'electron-browser-not-ready'); assert.equal(calls, 0);
+  runtimeProcess.type = 'browser';
+  const early = evaluate(); assert.equal(early.reason, 'electron-module-not-ready'); assert.equal(early.phase.processType, 'browser'); assert.equal(early.error.code, 'MODULE_NOT_FOUND');
+  moduleError = Object.assign(new Error("Cannot find module 'other-dependency'"), { code: 'MODULE_NOT_FOUND' });
+  assert.throws(evaluate, /other-dependency/);
+  moduleError = new Error('Invalid Electron API'); assert.throws(evaluate, /Invalid Electron API/);
+  moduleError = null; assert.equal(evaluate().reason, 'electron-app-not-ready');
+  ready = true; assert.equal(evaluate().state.version, '2.1.0');
+});
+
+test('startup waits for Electron and loaded window, preserving failed phase observations', async () => {
+  const root = join(tmpdir(), 'synthetic-upgrade-startup');
+  const context = { version: '2.1.0', nativeMachine: `${process.platform}-${process.arch}`, resources: join(root, 'resources'), accountHome: root, allowedDataRoots: [root], pid: 42 };
+  const window = { id: 7, visible: true, destroyed: false, loading: false, width: 900, height: 600, url: 'osir-anywhere-workbench://web/', rendererPid: 43 };
+  const state = { pid: 42, packaged: true, electron: '39.8.10', name: 'OSIR Anywhere', version: '2.1.0', platform: process.platform, arch: process.arch, resources: context.resources, home: root, userData: join(root, 'data'), windows: [window] };
+  const observations = [{ ready: false, reason: 'electron-module-not-ready' }, { ready: true, state: { ...state, windows: [{ ...window, loading: true }] } }, { ready: true, state }];
+  let count = 0, recorded;
+  const result = await waitForUpgradeWindow({ evaluate: async () => observations[count++] }, context, Date.now() + 2500, async value => { recorded = value; });
+  assert.deepEqual(result, { state, window }); assert.equal(count, 3); assert.deepEqual(recorded, observations);
+  let failed;
+  await assert.rejects(waitForUpgradeWindow({ evaluate: async () => ({ ready: false, reason: 'electron-module-not-ready' }) }, context, Date.now() + 30, async value => { failed = value; }), /readiness timed out/);
+  assert.equal(failed[0].reason, 'electron-module-not-ready');
+  const unexpected = new Error('Packaged exception unrelated to bootstrap');
+  await assert.rejects(waitForUpgradeWindow({ evaluate: async () => { throw unexpected; } }, context, Date.now() + 1000), error => error === unexpected);
+  await assert.rejects(waitForUpgradeWindow({ evaluate: async () => ({ ready: true, state: { ...state, version: 'wrong' } }) }, context, Date.now() + 30), /identity\/version/);
+});
+
+test('graceful quit invokes only the existing packaged renderer API after acknowledgement', async () => {
+  const scheduled = []; let quitCalls = 0;
+  const rendererWindow = { desktopWorkbench: { ownership: { quit: async () => { quitCalls++; } } } };
+  const webContents = { executeJavaScript: source => vm.runInNewContext(source, { window: rendererWindow, setTimeout: (fn, delay) => { assert.equal(delay, 100); scheduled.push(fn); } }) };
+  const inspector = { evaluate: async source => JSON.parse(JSON.stringify(await vm.runInNewContext(source, { process: { resourcesPath: '/synthetic', getBuiltinModule: () => ({ createRequire: () => name => { assert.equal(name, 'electron'); return { BrowserWindow: { fromId: id => { assert.equal(id, 7); return { webContents }; } } }; } }) } }))) };
+  assert.equal((await requestUpgradeQuit(inspector, 7)).requested, true); assert.equal(quitCalls, 0);
+  scheduled[0](); assert.equal(quitCalls, 1);
+  delete rendererWindow.desktopWorkbench;
+  await assert.rejects(requestUpgradeQuit(inspector, 7), /ownership.quit API missing/);
+  await assert.rejects(requestUpgradeQuit(inspector, undefined), /Owned window ID/);
+});
+
+test('durability requires acknowledged graceful quit and a real clean exit; errors and signals survive', async () => {
+  const child = { exitCode: null, signalCode: null }; let closed = false, observation;
+  const inspector = { evaluate: async source => { assert.ok(source.includes('desktopWorkbench')); setTimeout(() => { child.exitCode = 0; }, 5); return { requested: true, route: 'desktopWorkbench.ownership.quit' }; }, close: () => { closed = true; } };
+  await ownedExit(child, inspector, true, {}, { windowId: 7, graceMs: 50, observe: async value => { observation = value; } });
+  assert.equal(closed, true); assert.equal(observation.exitCode, 0); assert.equal(observation.forced, false); assert.equal(observation.clean, true);
+  const failure = { evaluate: async () => { throw new Error('quit-request failed'); }, close() {} };
+  await assert.rejects(ownedExit({ exitCode: 0, signalCode: null }, failure, true, {}, { windowId: 7, graceMs: 1, observe: async value => { observation = value; } }), /durability unproven/);
+  assert.equal(observation.requestError, 'quit-request failed');
+  await assert.rejects(ownedExit({ exitCode: null, signalCode: 'SIGTERM' }, inspector, true, {}, { windowId: 7, graceMs: 1, observe: async value => { observation = value; } }), /durability unproven/);
+  assert.equal(observation.signal, 'SIGTERM'); assert.equal(observation.clean, false);
+  await assert.rejects(ownedExit({ exitCode: null, signalCode: null }, { evaluate: async () => ({ requested: true, route: 'desktopWorkbench.ownership.quit' }), close() {} }, true, {}, { windowId: 7, graceMs: 1, observe: async value => { observation = value; } }), /durability unproven/);
+  assert.equal(observation.clean, false);
+  await ownedExit({ exitCode: 0, signalCode: null }, { evaluate: async source => { assert.ok(source.includes('.app.quit()')); throw new Error('app.quit failed'); }, close() {} }, false, {}, { observe: async value => { observation = value; } });
+  assert.equal(observation.route, 'app.quit'); assert.equal(observation.requestError, 'app.quit failed'); assert.equal(observation.exitCode, 0);
+});
+
+test('Windows shared hardware probe retries once, preserving timeout even with exit 0 and valid JSON', async () => {
+  const records = [], timeouts = [], machine = { arch: 'x64', translated: false };
+  let attempts = 0;
+  class Probe {
+    constructor(context) { Object.assign(this, context); }
+    async run(executable, args, label, options) {
+      timeouts.push(options.timeout); attempts++;
+      const result = { executable, args, code: 0, signal: null, stdout: '{"nativeMachine":34404,"processMachine":0}', stderr: '' };
+      await this.evidence(`${label}.json`, bytes({ ...result, ...(attempts === 1 ? { failure: 'Native command timed out' } : {}) }));
+      if (attempts === 1) throw Object.assign(new Error('Native command timed out'), { commandResult: result });
+      return machine;
+    }
+    hardware() { return this.run('powershell.exe', ['shared-probe-synthetic'], 'hardware-machine'); }
+  }
+  const context = { evidence: async (name, raw) => records.push({ name, ...JSON.parse(raw) }) };
+  assert.deepEqual(await observeUpgradeHardware(context, { Adapter: Probe, platform: 'win32' }), machine);
+  assert.deepEqual(timeouts, [60000, 120000]); assert.equal(records.length, 2);
+  assert.equal(records[0].name, 'hardware-attempt-1-hardware-machine.json'); assert.equal(records[0].code, 0); assert.equal(records[0].failure, 'Native command timed out');
+  assert.equal(records[1].name, 'hardware-attempt-2-hardware-machine.json'); assert.equal(records[1].failure, undefined);
+  for (const [platform, message, expectedCalls] of [['win32', 'Native command timed out', 2], ['win32', 'Native hardware-machine failed (exit 1)', 1], ['darwin', 'Native command timed out', 1]]) {
+    let count = 0;
+    class RejectedProbe { run() {} async hardware() { count++; throw new Error(message); } }
+    await assert.rejects(observeUpgradeHardware(context, { Adapter: RejectedProbe, platform }), error => error.message === message);
+    assert.equal(count, expectedCalls);
+  }
+});
+
+test('forced cleanup of a real synthetic child cannot certify data durability', async t => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { env: {}, stdio: 'ignore', detached: process.platform !== 'win32' });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  let observed;
+  await assert.rejects(ownedExit(child, { evaluate: async () => ({ requested: true, route: 'desktopWorkbench.ownership.quit' }), close() {} }, true, {},
+    { windowId: 7, graceMs: 20, observe: async value => { observed = value; } }), /durability unproven/);
+  assert.equal(observed.forced, true); assert.equal(observed.clean, false);
+  assert.ok(observed.exitCode !== null || observed.signal !== null);
+});
 
 test('Windows GUI preflight retries one timeout and preserves its raw failure before a live success', async () => {
   const env = { synthetic: true }, records = [], gui = { interactiveDesktop: true, sessionId: 1 };
