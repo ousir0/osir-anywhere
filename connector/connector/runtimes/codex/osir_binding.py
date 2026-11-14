@@ -238,6 +238,9 @@ def bound_environment(home: Path) -> dict[str, str]:
         "APPDATA", "LOCALAPPDATA", "USER", "LOGNAME"}
     env = {key: "" for key in os.environ}
     env.update({key: os.environ[key] for key in allowed if key in os.environ})
+    # Native HTTP clients can discover OS proxies even after env scrubbing.
+    # Keep local Client routes direct; inherited bypass lists cannot widen this.
+    env["NO_PROXY"] = env["no_proxy"] = "127.0.0.1,localhost,::1"
     env["CODEX_HOME"] = str(home)
     # An empty CLI originator becomes an invalid SDK user-agent prefix.
     env["CODEX_INTERNAL_ORIGINATOR_OVERRIDE"] = "osir_anywhere_connector"
