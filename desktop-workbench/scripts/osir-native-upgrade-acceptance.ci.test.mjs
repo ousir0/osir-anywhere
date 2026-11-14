@@ -4,8 +4,14 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DISCOVERY_TEST_MODULES, TOOL_VERSIONS, discoveryTestSources, linkTools, prepareSpec } from './osir-native-upgrade-acceptance.ci.mjs';
+import { DISCOVERY_TEST_MODULES, TOOL_VERSIONS, UPGRADE_PRODUCT, discoveryTestSources, linkTools, prepareSpec, verifyUpgradeProduct } from './osir-native-upgrade-acceptance.ci.mjs';
 import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
+
+test('upgrade plan binds frozen 2.2.1 source/recipe/version while archive/run/lock remain reviewed inputs', () => {
+  const bindings = { ...UPGRADE_PRODUCT, configSha256: 'a'.repeat(64), dependencyLockSha256: 'b'.repeat(64) };
+  assert.equal(verifyUpgradeProduct(bindings), bindings);
+  for (const key of Object.keys(UPGRADE_PRODUCT)) assert.throws(() => verifyUpgradeProduct({ ...bindings, [key]: 'different' }), /frozen 2.2.1/);
+});
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'osir-upgrade-ci-unit-')));
@@ -15,7 +21,7 @@ async function fixture(t) {
   await writeFile(join(original, 'source-provenance.json'), '{"syntheticSource":true}\n');
   await writeFile(join(original, 'compiled.json'), '{"syntheticCompiled":true}\n');
   const base = { schemaVersion: 1, buildReceiptPath: join(original, 'build-receipt.json'), finalInstallerPath: join(original, 'final.dmg'), systemSignatureReportPath: join(original, 'system-signature.json'),
-    expected: { sourceSha256: 'a'.repeat(64), configSha256: 'b'.repeat(64), checkoutHead: 'c'.repeat(40), upstreamGitHead: 'd'.repeat(40), version: '2.2.0', target: 'darwin-universal', artifactSha256: 'e'.repeat(64), artifactSize: 1, systemSignatureReportSha256: 'f'.repeat(64) },
+    expected: { sourceSha256: 'a'.repeat(64), configSha256: 'b'.repeat(64), checkoutHead: 'c'.repeat(40), upstreamGitHead: 'd'.repeat(40), version: '2.2.1', target: 'darwin-universal', artifactSha256: 'e'.repeat(64), artifactSize: 1, systemSignatureReportSha256: 'f'.repeat(64) },
     runner: { nativeMachine: 'darwin-arm64' } };
   return { root, checkout, original, base };
 }

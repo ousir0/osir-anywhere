@@ -14,13 +14,15 @@ import { desktopRuntimePackagePaths } from './desktop-runtime-packages.mjs';
 import { nativeGuiProvenance, requireHostedRunner } from './osir-native-smoke-provision.mjs';
 import { SHA, bytes, check, digest, fingerprint, json, separate, within } from './osir-anywhere-release-common.mjs';
 
-export const BASELINE_VERSION = '2.1.0';
-export const FINAL_VERSION = '2.2.0';
-export const PATCH_VERSION = '2.2.1';
+export const BASELINE_VERSION = '2.2.0';
+export const FINAL_VERSION = '2.2.1';
+export const PATCH_VERSION = '2.2.2';
+// Server compatibility is independent of the Desktop release being tested.
+export const SERVER_VERSION = '2.2.0';
 export const PACKAGE_PATH = 'desktop-workbench/package.json';
 const SELF = fileURLToPath(import.meta.url);
 export const BOUNDARIES = [
-  'Controlled version-only derivative tests installer cross-version data protection; it is not a published 2.1.0 release or historical schema migration.',
+  'Controlled version-only 2.2.0 derivative of final Desktop 2.2.1 tests installer cross-version data protection; it is not the published 2.2.0 release or historical schema migration.',
   'Discovery executes the final packaged DesktopUpdateService with a constructor-injected synthetic RSA feed and unchanged synthetic Server; it does not certify production feed/key/network or renderer update UI.',
   'No real accounts, models, OAuth, interactive installation confirmation or bypass of OS protections is tested.',
   'macOS account-free cross-version fixture uses Chromium mock keychain for the ad-hoc baseline/final pair; real secret-store permissions and encrypted credential migration are not covered. Final production UI/SSO acceptance launches without this argument.',
@@ -46,7 +48,7 @@ export async function observeUpgradeHardware(context, { Adapter = NativeAdapter,
 
 export function validateSpec(spec, mode = 'run') {
   validateSmokeSpec(spec, { requireIsolation: false });
-  check(spec.expected.version === FINAL_VERSION, 'This controlled acceptance requires final Desktop 2.2.0');
+  check(spec.expected.version === FINAL_VERSION, 'This controlled acceptance requires final Desktop 2.2.1');
   check(spec.runner.mode === undefined || spec.runner.mode === 'disposable-clean-runner', 'Upgrade helper only supports the explicitly authorized disposable-clean-runner policy');
   if (mode === 'prepare-baseline') {
     const source = spec.baselineSource;
@@ -63,7 +65,7 @@ export function validateSpec(spec, mode = 'run') {
 export function versionOnlyDerivative(original) {
   const text = original.toString('utf8'), parsed = JSON.parse(text);
   check(parsed.version === FINAL_VERSION && parsed.name === 'osir-anywhere-desktop-workbench' && parsed.productName === 'OSIR Anywhere', 'Frozen package identity/version mismatch');
-  const candidates = [...text.matchAll(/"version"\s*:\s*"2\.2\.0"/g)];
+  const candidates = [...text.matchAll(/"version"\s*:\s*"2\.2\.1"/g)];
   check(candidates.length === 1, 'Ambiguous version token; refusing broad metadata rewrite');
   const token = candidates[0], offset = token.index + token[0].lastIndexOf(FINAL_VERSION);
   const changed = Buffer.from(`${text.slice(0, offset)}${BASELINE_VERSION}${text.slice(offset + FINAL_VERSION.length)}`);
@@ -234,7 +236,7 @@ export async function prepareBaseline(spec, output) {
     report.harness = [];
     for (const name of ['osir-native-upgrade-acceptance.mjs', 'osir-native-upgrade-acceptance.runtime.mjs', 'osir-native-upgrade-acceptance.extract.mjs']) report.harness.push({ path: name, ...await fileIdentity(new URL(name, import.meta.url)) });
     report.networkPolicy = 'unrestricted-no-product-credentials';
-    report.packagingDifferences = ['test-only installer container rebuilt', 'app version resources generated for 2.1.0', ...(process.platform === 'darwin' ? ['valid ad-hoc signatures generated after packaging; classification remains unsigned'] : ['NSIS and PE version resources generated without Authenticode'])];
+    report.packagingDifferences = ['test-only installer container rebuilt', 'app version resources generated for 2.2.0', ...(process.platform === 'darwin' ? ['valid ad-hoc signatures generated after packaging; classification remains unsigned'] : ['NSIS and PE version resources generated without Authenticode'])];
     report.result = 'prepared';
   } catch (error) { report.failure = String(error.message).slice(0, 600); }
   await writeFile(join(output, 'baseline-receipt.json'), bytes(report), { flag: 'wx', mode: 0o600 });
@@ -351,11 +353,11 @@ export async function runAcceptance(spec, output, { adapterFactory, isolationVer
 
 export function validateDiscovery(value) {
   check(value?.kind === 'packaged-native-service-integration' && value.syntheticManifest === true && value.temporaryTestKey === true && value.serverVersionUnchanged === true, 'Discovery scope/key/feed mismatch');
-  check(fingerprint(value.actualVersions) === fingerprint({ desktop: FINAL_VERSION, manifestBaseline: FINAL_VERSION, manifestPatch: PATCH_VERSION, serverBefore: FINAL_VERSION, serverAfter: FINAL_VERSION }), 'Discovery version observations mismatch');
+  check(fingerprint(value.actualVersions) === fingerprint({ desktop: FINAL_VERSION, manifestBaseline: FINAL_VERSION, manifestPatch: PATCH_VERSION, serverBefore: SERVER_VERSION, serverAfter: SERVER_VERSION }), 'Discovery version observations mismatch');
   check(value.baseline?.available === false && value.patch?.available === true && value.patch.latestVersion === PATCH_VERSION && value.patch.error === null && value.invalidSignature?.error === 'checkFailed', 'Desktop PATCH / negative signature controls failed');
   check(value.packageVersion === FINAL_VERSION && value.packaged === true && typeof value.electron === 'string' && SHA.test(value.serviceSha256) && /app\.asar[\\/]dist[\\/]electron[\\/]desktop-updates\.js$/.test(value.servicePath), 'Discovery did not execute the final ASAR service');
   check(Array.isArray(value.requests) && value.requests.length === 6 && value.requests.every(r => r.transport === 'synthetic-fetcher' && r.method === 'GET'), 'Discovery request evidence incomplete');
-  check(value.requests.map(r => r.kind).join(',') === 'control-health,manifest,manifest,health,manifest,control-health' && value.requests.filter(r => r.kind.endsWith('health')).every(r => r.version === FINAL_VERSION) && value.installerCalls === 0, 'Discovery used an unexpected request/installer path');
+  check(value.requests.map(r => r.kind).join(',') === 'control-health,manifest,manifest,health,manifest,control-health' && value.requests.filter(r => r.kind.endsWith('health')).every(r => r.version === SERVER_VERSION) && value.installerCalls === 0, 'Discovery used an unexpected request/installer path');
   return value;
 }
 
@@ -375,7 +377,7 @@ export function parseArguments(args) {
 
 async function main() {
   if (process.argv.slice(2).join(' ') === '--help') {
-    console.log('prepare-baseline --spec ABS --output NEW_ABS\nrun --spec ABS --output NEW_ABS\nRemote GitHub-hosted clean native GUI CI only. prepare reuses frozen compiled outputs or extracts them from the final installer, then packages test-only 2.1.0. run installs baseline and original final bytes. Network policy: unrestricted-no-product-credentials; public network may be reachable, never an offline claim. No production source writes or publish. See osir-native-upgrade-acceptance.md.'); return;
+    console.log('prepare-baseline --spec ABS --output NEW_ABS\nrun --spec ABS --output NEW_ABS\nRemote GitHub-hosted clean native GUI CI only. prepare reuses frozen compiled outputs or extracts them from final Desktop 2.2.1, then packages test-only 2.2.0 (not the published historical release). run installs baseline and original final bytes; discovery tests Desktop 2.2.1 -> 2.2.2 with Server fixed at 2.2.0. Network policy: unrestricted-no-product-credentials; public network may be reachable, never an offline claim. No production source writes or publish. See osir-native-upgrade-acceptance.md.'); return;
   }
   const options = parseArguments(process.argv.slice(2)), spec = await json(options.spec);
   let result;

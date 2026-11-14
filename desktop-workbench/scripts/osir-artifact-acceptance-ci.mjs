@@ -114,7 +114,7 @@ export async function githubMetadata(path, token, fetcher = fetch) {
 
 export function verifyProducer(bindings, artifact, run, remote, jobs) {
   check(run.id === artifact.runId && run.run_attempt === artifact.runAttempt && run.head_sha === bindings.sourceCommit && run.event === 'workflow_dispatch' && run.path === WORKFLOW && ['in_progress', 'completed'].includes(run.status), 'Producer run/attempt/workflow/commit mismatch');
-  check(run.repository?.full_name === REPOSITORY && run.repository.private === true && run.head_repository?.full_name === REPOSITORY, 'Producer must be the reviewed private repository');
+  check(run.repository?.full_name === REPOSITORY && run.repository.private === false && run.head_repository?.full_name === REPOSITORY, 'Producer must be the reviewed public repository');
   check(remote.id === artifact.artifactId && remote.expired === false && remote.name === `osir-anywhere-${artifact.target}-${bindings.sourceCommit}-${artifact.runAttempt}` && positive(remote.size_in_bytes), 'Artifact ID/name/attempt invalid, empty or expired');
   check(remote.digest === `sha256:${artifact.archiveSha256}` && remote.workflow_run?.id === artifact.runId && remote.workflow_run.head_sha === bindings.sourceCommit && remote.workflow_run.repository_id === run.repository.id && remote.workflow_run.head_repository_id === run.repository.id, 'Archive digest or artifact producer identity mismatch');
   const label = artifact.target === 'darwin-universal' ? 'macos-15' : artifact.target === 'win32-x64' ? 'windows-2022' : 'windows-11-arm';

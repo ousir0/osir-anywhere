@@ -417,11 +417,11 @@ export async function packagedDiscoveryProbe() {
   const { app } = require('electron'), fs = require('node:fs'), path = require('node:path');
   const { createHash, generateKeyPairSync, sign } = require('node:crypto');
   const servicePath = require.resolve('./dist/electron/desktop-updates.js');
-  if (!app.isPackaged || app.getVersion() !== '2.2.0' || servicePath !== path.join(process.resourcesPath, 'app.asar/dist/electron/desktop-updates.js')) throw new Error('Expected final packaged native service');
+  if (!app.isPackaged || app.getVersion() !== '2.2.1' || servicePath !== path.join(process.resourcesPath, 'app.asar/dist/electron/desktop-updates.js')) throw new Error('Expected final packaged native service');
   const { DesktopUpdateService } = require(servicePath), { RELEASE_MANIFEST_URL } = require('./dist/electron/release-manifest.js');
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
-  const requests = [], stages = [], envelopes = []; let installerCalls = 0, version = '2.2.0', invalid = false, healthControl = 'before';
+  const requests = [], stages = [], envelopes = []; let installerCalls = 0, version = '2.2.1', invalid = false, healthControl = 'before';
   const server = { serverUrl: 'http://127.0.0.1:47139', apiNamespace: '/api/v2', oauthWebOrigin: 'http://127.0.0.1:47139' };
   const directory = fs.mkdtempSync(path.join(app.getPath('userData'), 'native-patch-discovery-'));
   const fetcher = async (input, init) => {
@@ -450,7 +450,7 @@ export async function packagedDiscoveryProbe() {
     openInstaller: async () => { installerCalls++; throw new Error('Installer opening is forbidden in discovery'); } });
   try {
     const serverBefore = await (await fetcher(server.serverUrl + '/api/v2/health')).json(); healthControl = null;
-    const baseline = await service.check(server); version = '2.2.1';
+    const baseline = await service.check(server); version = '2.2.2';
     const patch = await service.check(server); invalid = true;
     const invalidSignature = await service.check(server);
     healthControl = 'after'; const serverAfter = await (await fetcher(server.serverUrl + '/api/v2/health')).json();

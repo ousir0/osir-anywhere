@@ -7,10 +7,20 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HARNESS_FILES, acceptanceMatrix, reviewedBindings, verifyHarness, verifyHarnessFiles } from './osir-artifact-acceptance-ci.mjs';
 import { bindInputs } from './osir-native-smoke.mjs';
-import { bindBaseline, validateSpec } from './osir-native-upgrade-acceptance.mjs';
+import { bindBaseline, FINAL_VERSION, validateSpec } from './osir-native-upgrade-acceptance.mjs';
 import { SHA, bytes, check, digest, fingerprint, immutableFile, inspect, json, matches, within } from './osir-anywhere-release-common.mjs';
 
 export const TOOL_VERSIONS = { 'electron-builder': '26.18.1', '@electron/asar': '3.4.1', typescript: '6.0.3' };
+export const UPGRADE_PRODUCT = Object.freeze({
+  sourceCommit: 'a85a573f7a424eb1ca557fc43b8d84e4d8ec000d',
+  sourceSha256: '50f155a61d75222134446cdb094645faa80677ea80a66a0fa02a578ca3fc85ad',
+  recipeSha256: '2f9e9ab2b224b2d41e20e002132d3f6ad63773507271ecaf85bc323ef1ed01fa',
+  version: FINAL_VERSION,
+});
+export function verifyUpgradeProduct(bindings) {
+  for (const [key, value] of Object.entries(UPGRADE_PRODUCT)) check(bindings[key] === value, `Upgrade bindings differ from frozen 2.2.1 product: ${key}`);
+  return bindings;
+}
 export const DISCOVERY_TEST_MODULES = ['desktop-updates', 'json-store', 'update-version', 'update-download', 'release-manifest'];
 export const UPGRADE_FILES = [
   '.github/workflows/osir-anywhere-upgrade-acceptance.yml',
@@ -153,7 +163,7 @@ async function main() {
   check(['plan', 'verify', 'link-tools', 'prepare-spec', 'seal-baseline', 'run-spec', 'collect-prepare', 'collect-run'].includes(mode), 'Use plan|verify|link-tools|prepare-spec|seal-baseline|run-spec|collect-prepare|collect-run MACHINE');
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: checkout, encoding: 'utf8' }).trim();
   const harness = verifyHarness(env, head), files = await verifyHarnessFiles(head, checkout, REVIEW_FILES);
-  const bindings = reviewedBindings(env.OSIR_ACCEPTANCE_BINDINGS, env.OSIR_ACCEPTANCE_BINDINGS_SHA256);
+  const bindings = verifyUpgradeProduct(reviewedBindings(env.OSIR_ACCEPTANCE_BINDINGS, env.OSIR_ACCEPTANCE_BINDINGS_SHA256));
   const selected = acceptanceMatrix(bindings, env.OSIR_ACCEPTANCE_TARGET ?? 'all');
   check(isAbsolute(env.RUNNER_TEMP ?? ''), 'Absolute runner temp required');
   const root = join(env.RUNNER_TEMP, 'osir-artifact-acceptance'); await mkdir(root, { recursive: true, mode: 0o700 });

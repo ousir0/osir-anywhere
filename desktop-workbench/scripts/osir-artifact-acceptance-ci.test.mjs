@@ -45,7 +45,7 @@ async function fixture(t, target = 'darwin-universal') {
 function metadata(bindings, a) {
   const label = a.target === 'darwin-universal' ? 'macos-15' : a.target === 'win32-x64' ? 'windows-2022' : 'windows-11-arm';
   return {
-    run: { id: a.runId, run_attempt: a.runAttempt, head_sha: bindings.sourceCommit, event: 'workflow_dispatch', path: '.github/workflows/osir-anywhere-native-build.yml', status: 'completed', conclusion: 'failure', repository: { full_name: REPOSITORY, private: true, id: 100 }, head_repository: { full_name: REPOSITORY } },
+    run: { id: a.runId, run_attempt: a.runAttempt, head_sha: bindings.sourceCommit, event: 'workflow_dispatch', path: '.github/workflows/osir-anywhere-native-build.yml', status: 'completed', conclusion: 'failure', repository: { full_name: REPOSITORY, private: false, id: 100 }, head_repository: { full_name: REPOSITORY } },
     remote: { id: a.artifactId, expired: false, name: `osir-anywhere-${a.target}-${bindings.sourceCommit}-${a.runAttempt}`, size_in_bytes: 1234, digest: `sha256:${a.archiveSha256}`, workflow_run: { id: a.runId, head_sha: bindings.sourceCommit, repository_id: 100, head_repository_id: 100 } },
     jobs: [{ name: `build (${a.target}, ${label})`, run_id: a.runId, run_attempt: a.runAttempt, head_sha: bindings.sourceCommit, status: 'completed', conclusion: 'success', labels: [label] }],
   };
@@ -72,7 +72,7 @@ test('producer permits a successful original target in a failed run, rejects wro
   assert.equal(verifyProducer(f.bindings, f.artifact, m.run, m.remote, m.jobs).runConclusion, 'failure');
   const running = { ...m.run, status: 'in_progress', conclusion: null };
   assert.equal(verifyProducer(f.bindings, f.artifact, running, m.remote, m.jobs).runStatus, 'in_progress');
-  const edits = [v => { v.run.repository.private = false; }, v => { v.remote.digest = `sha256:${'2'.repeat(64)}`; }, v => { v.remote.workflow_run.repository_id = 200; }, v => { v.jobs[0].conclusion = 'failure'; }, v => { v.jobs[0].run_attempt = 2; }, v => { v.run.head_sha = H; }];
+  const edits = [v => { v.run.repository.private = true; }, v => { v.remote.digest = `sha256:${'2'.repeat(64)}`; }, v => { v.remote.workflow_run.repository_id = 200; }, v => { v.jobs[0].conclusion = 'failure'; }, v => { v.jobs[0].run_attempt = 2; }, v => { v.run.head_sha = H; }];
   for (const edit of edits) { const v = clone(m); edit(v); assert.throws(() => verifyProducer(f.bindings, f.artifact, v.run, v.remote, v.jobs)); }
   const get = async path => path.endsWith('/artifacts/456') ? m.remote : path.includes('/jobs?') ? { total_count: 1, jobs: m.jobs } : m.run;
   assert.equal((await verifyRemoteArtifacts(f.bindings, acceptanceMatrix(f.bindings, 'darwin-universal'), 'ephemeral', get)).length, 1);

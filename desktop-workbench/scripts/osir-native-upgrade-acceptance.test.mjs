@@ -12,13 +12,13 @@ import { verify } from 'node:crypto';
 import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 import { fileIdentity, fingerprintTree } from './osir-native-smoke.mjs';
 import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
-import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, observeUpgradeHardware, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
+import { BASELINE_VERSION, FINAL_VERSION, PATCH_VERSION, SERVER_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, observeUpgradeHardware, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
 import { Inspector, observeUpgradeGui, ownedExit, packagedDiscoveryProbe, packagedWindowState, recordInspectorProtocolFailure, requestUpgradeQuit, sanitizeInspectorProtocolError, SEED_SETTINGS, syntheticUpgradeLaunch, UpgradeAdapter, waitForUpgradeWelcome, waitForUpgradeWindow } from './osir-native-upgrade-acceptance.runtime.mjs';
 import { electronFromLock, reuseExtractedRuntime, validateElectronFramework } from './osir-native-upgrade-acceptance.extract.mjs';
 import { collectRaw, discoveryTestSources, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
 import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
 
-const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
+const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.1"\n}\n');
 const identity = data => ({ size: data.length, sha256: digest(data) });
 
 class SyntheticInspectorSocket extends EventTarget {
@@ -144,7 +144,7 @@ test('real early inspector context without process remains a recorded bootstrap 
 
 test('packaged startup records browser bootstrap and exact missing-electron phases without hiding other exceptions', () => {
   let calls = 0, ready = false, moduleError = Object.assign(new Error("Cannot find module 'electron'\nRequire stack:\n- synthetic/app.asar/package.json"), { code: 'MODULE_NOT_FOUND' });
-  const electron = { app: { isReady: () => ready, getName: () => 'OSIR Anywhere', getVersion: () => '2.1.0', isPackaged: true, getPath: () => '/synthetic' }, BrowserWindow: { getAllWindows: () => [] } };
+  const electron = { app: { isReady: () => ready, getName: () => 'OSIR Anywhere', getVersion: () => '2.2.0', isPackaged: true, getPath: () => '/synthetic' }, BrowserWindow: { getAllWindows: () => [] } };
   const runtimeProcess = { type: undefined, versions: { electron: '39.8.10' }, resourcesPath: '/synthetic', getBuiltinModule: () => ({ createRequire: () => () => { calls++; if (moduleError) throw moduleError; return electron; } }) };
   const evaluate = () => JSON.parse(JSON.stringify(vm.runInNewContext(`(${packagedWindowState.toString()})()`, { process: runtimeProcess })));
   assert.equal(evaluate().reason, 'electron-browser-not-ready'); assert.equal(calls, 0);
@@ -154,14 +154,14 @@ test('packaged startup records browser bootstrap and exact missing-electron phas
   assert.throws(evaluate, /other-dependency/);
   moduleError = new Error('Invalid Electron API'); assert.throws(evaluate, /Invalid Electron API/);
   moduleError = null; assert.equal(evaluate().reason, 'electron-app-not-ready');
-  ready = true; assert.equal(evaluate().state.version, '2.1.0');
+  ready = true; assert.equal(evaluate().state.version, '2.2.0');
 });
 
 test('startup waits for Electron and loaded window, preserving failed phase observations', async () => {
   const root = join(tmpdir(), 'synthetic-upgrade-startup');
-  const context = { version: '2.1.0', nativeMachine: `${process.platform}-${process.arch}`, resources: join(root, 'resources'), accountHome: root, allowedDataRoots: [root], pid: 42 };
+  const context = { version: '2.2.0', nativeMachine: `${process.platform}-${process.arch}`, resources: join(root, 'resources'), accountHome: root, allowedDataRoots: [root], pid: 42 };
   const window = { id: 7, visible: true, destroyed: false, loading: false, width: 900, height: 600, url: 'osir-anywhere-workbench://web/', rendererPid: 43 };
-  const state = { pid: 42, packaged: true, electron: '39.8.10', name: 'OSIR Anywhere', version: '2.1.0', platform: process.platform, arch: process.arch, resources: context.resources, home: root, userData: join(root, 'data'), windows: [window] };
+  const state = { pid: 42, packaged: true, electron: '39.8.10', name: 'OSIR Anywhere', version: '2.2.0', platform: process.platform, arch: process.arch, resources: context.resources, home: root, userData: join(root, 'data'), windows: [window] };
   const observations = [{ ready: false, reason: 'electron-module-not-ready' }, { ready: true, state: { ...state, windows: [{ ...window, loading: true }] } }, { ready: true, state }];
   let count = 0, recorded;
   const result = await waitForUpgradeWindow({ evaluate: async (_source, options) => { assert.deepEqual(options, { awaitPromise: false }); return observations[count++]; } }, context, Date.now() + 2500, async value => { recorded = value; });
@@ -338,24 +338,24 @@ test('upgrade NSIS path accepts exact zero PE revision, rejects other revisions 
   const source = join(f.root, 'tiny-windows-app'), destination = join(f.root, 'installed'), resources = join(destination, 'resources');
   await mkdir(join(source, 'dist'), { recursive: true }); await mkdir(resources, { recursive: true });
   const config = { synthetic: true }; await writeFile(join(source, 'dist/config.json'), bytes(config));
-  const packageMetadata = { name: 'osir-anywhere-desktop-workbench', productName: 'OSIR Anywhere', version: '2.2.0', main: 'dist/electron/main.js' };
+  const packageMetadata = { name: 'osir-anywhere-desktop-workbench', productName: 'OSIR Anywhere', version: '2.2.1', main: 'dist/electron/main.js' };
   const archive = join(resources, 'app.asar');
   await writeFile(join(source, 'package.json'), bytes(packageMetadata)); await asar.createPackage(source, archive);
   const pe = Buffer.alloc(128); pe.writeUInt16LE(0x5a4d); pe.writeUInt32LE(64, 60); pe.writeUInt32LE(0x4550, 64); pe.writeUInt16LE(process.arch === 'arm64' ? 0xaa64 : 0x8664, 68);
   await writeFile(join(destination, 'OSIR Anywhere.exe'), pe);
-  let metadata = { ProductName: 'OSIR Anywhere', ProductVersion: '2.2.0.0', FileVersion: '2.2.0' };
+  let metadata = { ProductName: 'OSIR Anywhere', ProductVersion: '2.2.1.0', FileVersion: '2.2.1' };
   const spec = { ...f.spec, expected: { ...f.spec.expected, configSha256: fingerprint(config) } };
   const adapter = new UpgradeAdapter({ work: f.root, spec, env: {}, evidence: async () => {} });
   adapter.run = async (_exe, _args, label) => label.endsWith('-pe-metadata') ? JSON.stringify(metadata) : '';
   const artifact = { ...await fileIdentity(spec.finalInstallerPath) };
-  assert.equal((await adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final')).pkg.version, '2.2.0');
-  metadata = { ...metadata, ProductVersion: '2.2.0.1' };
-  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final'), /product\/version mismatch/);
-  metadata.ProductVersion = '2.2.0.0'; metadata.FileVersion = '2.2.0.1';
-  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final'), /product\/version mismatch/);
-  metadata.FileVersion = '2.2.0'; await rm(archive);
-  await writeFile(join(source, 'package.json'), bytes({ ...packageMetadata, version: '2.2.0.0' })); await asar.createPackage(source, archive);
-  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.0', 'final'), /ASAR product\/version mismatch/);
+  assert.equal((await adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.1', 'final')).pkg.version, '2.2.1');
+  metadata = { ...metadata, ProductVersion: '2.2.1.1' };
+  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.1', 'final'), /product\/version mismatch/);
+  metadata.ProductVersion = '2.2.1.0'; metadata.FileVersion = '2.2.1.1';
+  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.1', 'final'), /product\/version mismatch/);
+  metadata.FileVersion = '2.2.1'; await rm(archive);
+  await writeFile(join(source, 'package.json'), bytes({ ...packageMetadata, version: '2.2.1.0' })); await asar.createPackage(source, archive);
+  await assert.rejects(adapter.installWindows(spec.finalInstallerPath, artifact, '2.2.1', 'final'), /ASAR product\/version mismatch/);
 });
 
 async function fixture(t) {
@@ -365,9 +365,9 @@ async function fixture(t) {
   const files = [{ path: PACKAGE_PATH, ...identity(originalPackage), executable: false }, { path: 'connector/synthetic.txt', ...identity(Buffer.from('same')), executable: false }];
   const source = { schemaVersion: 1, upstreamGitHead: 'a'.repeat(40), sourceSha256: fingerprint(files), files };
   const plan = { sourceSha256: source.sourceSha256, configSha256: 'c'.repeat(64), checkoutHead: 'b'.repeat(40), upstreamGitHead: source.upstreamGitHead,
-    target: 'darwin-universal', version: '2.2.0', dependencies: { lockSha256: 'd'.repeat(64) } };
+    target: 'darwin-universal', version: '2.2.1', dependencies: { lockSha256: 'd'.repeat(64) } };
   const finalBytes = Buffer.from('NOT AN EXECUTABLE: synthetic final fixture');
-  const artifact = { filename: 'osir-anywhere-2.2.0-darwin-universal.dmg', ...identity(finalBytes), systemSignature: 'unsigned' };
+  const artifact = { filename: 'osir-anywhere-2.2.1-darwin-universal.dmg', ...identity(finalBytes), systemSignature: 'unsigned' };
   const finalInstallerPath = join(root, artifact.filename); await writeFile(finalInstallerPath, finalBytes);
   const signature = { schemaVersion: 1, platform: 'darwin', artifactSha256: artifact.sha256, systemSignature: 'unsigned' };
   const systemSignatureReportPath = await save('signature.json', signature);
@@ -377,7 +377,7 @@ async function fixture(t) {
   const expected = { ...plan, artifactSha256: artifact.sha256, artifactSize: artifact.size, systemSignatureReportSha256: signatureIdentity.sha256 }; delete expected.dependencies;
   const directory = join(root, 'baseline'); await mkdir(directory);
   const derivative = versionOnlyDerivative(originalPackage), baselineBytes = Buffer.from('NOT AN EXECUTABLE: synthetic controlled baseline');
-  const baselineArtifact = { filename: 'TEST-ONLY-osir-anywhere-2.1.0-darwin-universal.dmg', ...identity(baselineBytes), systemSignature: 'unsigned' };
+  const baselineArtifact = { filename: 'TEST-ONLY-osir-anywhere-2.2.0-darwin-universal.dmg', ...identity(baselineBytes), systemSignature: 'unsigned' };
   await writeFile(join(directory, baselineArtifact.filename), baselineBytes);
   const baseline = { schemaVersion: 1, kind: 'controlled-version-only-derivative', result: 'prepared', releaseEligible: false, historicalBaseline: false,
     sourceSha256: source.sourceSha256, version: BASELINE_VERSION, target: plan.target, configSha256: plan.configSha256,
@@ -402,10 +402,10 @@ async function fixture(t) {
 
 function discoveryFixture() {
   return { kind: 'packaged-native-service-integration', syntheticManifest: true, temporaryTestKey: true, serverVersionUnchanged: true,
-    actualVersions: { desktop: '2.2.0', manifestBaseline: '2.2.0', manifestPatch: '2.2.1', serverBefore: '2.2.0', serverAfter: '2.2.0' },
-    baseline: { available: false }, patch: { available: true, latestVersion: '2.2.1', error: null }, invalidSignature: { error: 'checkFailed' },
-    packageVersion: '2.2.0', packaged: true, electron: '39.2.7', serviceSha256: 'a'.repeat(64), servicePath: '/synthetic/app.asar/dist/electron/desktop-updates.js',
-    requests: ['control-health', 'manifest', 'manifest', 'health', 'manifest', 'control-health'].map(kind => ({ kind, version: '2.2.0', method: 'GET', transport: 'synthetic-fetcher' })), installerCalls: 0 };
+    actualVersions: { desktop: '2.2.1', manifestBaseline: '2.2.1', manifestPatch: '2.2.2', serverBefore: '2.2.0', serverAfter: '2.2.0' },
+    baseline: { available: false }, patch: { available: true, latestVersion: '2.2.2', error: null }, invalidSignature: { error: 'checkFailed' },
+    packageVersion: '2.2.1', packaged: true, electron: '39.2.7', serviceSha256: 'a'.repeat(64), servicePath: '/synthetic/app.asar/dist/electron/desktop-updates.js',
+    requests: ['control-health', 'manifest', 'manifest', 'health', 'manifest', 'control-health'].map(kind => ({ kind, version: kind.endsWith('health') ? '2.2.0' : '2.2.1', method: 'GET', transport: 'synthetic-fetcher' })), installerCalls: 0 };
 }
 
 test('CLI requires known modes, absolute fresh paths and no hidden isolation bypass flags', () => {
@@ -415,10 +415,10 @@ test('CLI requires known modes, absolute fresh paths and no hidden isolation byp
 
 test('baseline changes one version token, preserving Unicode, formatting and every other byte', () => {
   const { changed, metadataDiff } = versionOnlyDerivative(originalPackage);
-  assert.equal(changed.toString(), originalPackage.toString().replace('"2.2.0"', '"2.1.0"'));
+  assert.equal(changed.toString(), originalPackage.toString().replace('"2.2.1"', '"2.2.0"'));
   assert.equal(metadataDiff.length, 1); assert.equal(metadataDiff[0].pointer, '/version');
-  assert.equal(changed.subarray(metadataDiff[0].byteOffset, metadataDiff[0].byteOffset + 5).toString(), '2.1.0');
-  for (const source of [originalPackage.toString().replace('"2.2.0"', '"2.1.0"'), originalPackage.toString().replace('"version":', '"nested":{"version":"2.2.0"},"version":')]) assert.throws(() => versionOnlyDerivative(Buffer.from(source)));
+  assert.equal(changed.subarray(metadataDiff[0].byteOffset, metadataDiff[0].byteOffset + 5).toString(), '2.2.0');
+  for (const source of [originalPackage.toString().replace('"2.2.1"', '"2.2.0"'), originalPackage.toString().replace('"version":', '"nested":{"version":"2.2.1"},"version":')]) assert.throws(() => versionOnlyDerivative(Buffer.from(source)));
 });
 
 test('independent copy rebases contained links, shares no files and rejects escaping links', async t => {
@@ -481,9 +481,9 @@ test('CI collector preserves raw failure evidence and refuses synthetic native p
   await assert.rejects(lstat(join(f.root, 'collected/work')), { code: 'ENOENT' });
 });
 
-test('spec pins final 2.2.0, original receipt and explicit extraction inputs', async t => {
+test('spec pins final 2.2.1, original receipt and explicit extraction inputs', async t => {
   const f = await fixture(t); assert.equal(validateSpec(f.spec), f.spec);
-  assert.throws(() => validateSpec({ ...f.spec, expected: { ...f.spec.expected, version: '2.1.0' } }));
+  assert.throws(() => validateSpec({ ...f.spec, expected: { ...f.spec.expected, version: '2.2.0' } }));
   const source = { checkout: '/frozen', compiledReceiptPath: '/compiled.json', compiledReceiptSha256: 'a'.repeat(64), mode: 'final-installer-copy', dependencyLockPath: '/resolved-yarn.lock' };
   assert.doesNotThrow(() => validateSpec({ ...f.spec, baselineSource: source }, 'prepare-baseline'));
   assert.throws(() => validateSpec({ ...f.spec, baselineSource: { ...source, dependencyLockPath: undefined } }, 'prepare-baseline'));
@@ -531,15 +531,20 @@ test('small ASAR extraction reuses shipped renderer/runtime bytes and preserves 
 });
 
 test('report rejects Server-coupled discovery, bad signatures, downloads and non-packaged services', () => {
+  assert.deepEqual([BASELINE_VERSION, FINAL_VERSION, PATCH_VERSION, SERVER_VERSION], ['2.2.0', '2.2.1', '2.2.2', '2.2.0']);
   assert.doesNotThrow(() => validateDiscovery(discoveryFixture()));
-  for (const patch of [{ serverVersionUnchanged: false }, { actualVersions: { ...discoveryFixture().actualVersions, serverAfter: '2.2.1' } }, { invalidSignature: { error: null } }, { installerCalls: 1 }, { packaged: false }, { servicePath: '/source/desktop-updates.js' }, { requests: [] }]) assert.throws(() => validateDiscovery({ ...discoveryFixture(), ...patch }));
+  const coupled = { ...discoveryFixture(), actualVersions: { ...discoveryFixture().actualVersions, serverBefore: '2.2.1', serverAfter: '2.2.1' } };
+  assert.throws(() => validateDiscovery(coupled), /version observations/);
+  const wrongHealth = discoveryFixture(); wrongHealth.requests.find(r => r.kind === 'health').version = '2.2.1';
+  assert.throws(() => validateDiscovery(wrongHealth), /unexpected request/);
+  for (const patch of [{ serverVersionUnchanged: false }, { actualVersions: { ...discoveryFixture().actualVersions, serverAfter: '2.2.2' } }, { invalidSignature: { error: null } }, { installerCalls: 1 }, { packaged: false }, { servicePath: '/source/desktop-updates.js' }, { requests: [] }]) assert.throws(() => validateDiscovery({ ...discoveryFixture(), ...patch }));
 });
 
 function fakeAdapter(context, { corruptData = false, badDiscovery = false } = {}) {
   let snapshots = 0;
   return { hardware: async () => {}, installBaseline: async () => ({}), seedBaseline: async () => ({ synthetic: true }),
     snapshot: async () => [{ path: 'notes.json', size: 4, sha256: corruptData && ++snapshots > 1 ? '0'.repeat(64) : '1'.repeat(64) }],
-    installFinal: async () => ({}), verifyFinal: async () => ({ dataPreserved: true, baselineVersion: '2.1.0', finalVersion: '2.2.0', sameInstallPath: true, sameUserData: true, rendererStoragePreserved: true }),
+    installFinal: async () => ({}), verifyFinal: async () => ({ dataPreserved: true, baselineVersion: '2.2.0', finalVersion: '2.2.1', sameInstallPath: true, sameUserData: true, rendererStoragePreserved: true }),
     discovery: async () => ({ ...discoveryFixture(), installerCalls: badDiscovery ? 1 : 0 }) };
 }
 
@@ -592,10 +597,10 @@ test('serialized probe exercises the real DesktopUpdateService source in synthet
   const resourceRoot = process.platform === 'win32' ? 'C:\\controlled\\Resources' : '/controlled/Resources';
   const service = load('./desktop-updates'), servicePath = join(resourceRoot, 'app.asar/dist/electron/desktop-updates.js');
   const probeRequire = name => {
-    if (name === 'electron') return { app: { isPackaged: true, getVersion: () => '2.2.0', getPath: () => f.root } };
+    if (name === 'electron') return { app: { isPackaged: true, getVersion: () => '2.2.1', getPath: () => f.root } };
     if (name === servicePath) return service;
     if (name === './dist/electron/release-manifest.js') return load('./release-manifest');
-    if (name === './package.json') return { version: '2.2.0' };
+    if (name === './package.json') return { version: '2.2.1' };
     if (name === 'node:fs') return { ...require(name), readFileSync: (file, ...args) => file === servicePath ? Buffer.from('synthetic-packaged-service-bytes') : require(name).readFileSync(file, ...args) };
     return require(name);
   };
@@ -605,7 +610,10 @@ test('serialized probe exercises the real DesktopUpdateService source in synthet
   assert.deepEqual(Array.from(result.requests, request => `${request.kind}:${request.method}`), ['control-health:GET', 'manifest:GET', 'manifest:GET', 'health:GET', 'manifest:GET', 'control-health:GET']);
   validateDiscovery(JSON.parse(JSON.stringify(result)));
   assert.equal(result.privateKeyPersisted, false); assert.equal(result.installerCalls, 0);
-  for (const [i, envelope] of result.envelopes.entries()) assert.equal(verify('RSA-SHA256', Buffer.from(envelope.payload, 'base64'), result.publicKeyPem, Buffer.from(envelope.signature, 'base64')), i < 2);
+  for (const [i, envelope] of result.envelopes.entries()) {
+    assert.equal(verify('RSA-SHA256', Buffer.from(envelope.payload, 'base64'), result.publicKeyPem, Buffer.from(envelope.signature, 'base64')), i < 2);
+    assert.equal(JSON.parse(Buffer.from(envelope.payload, 'base64')).minimumServerVersion, '2.2.0');
+  }
   assert.ok(result.requests.every(request => request.method === 'GET'));
   assert.equal(result.requests.filter(request => request.kind === 'health').length, 1);
   assert.equal(Object.keys(result).some(key => /privatekey/i.test(key) && key !== 'privateKeyPersisted'), false);
