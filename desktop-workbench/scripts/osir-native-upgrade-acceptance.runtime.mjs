@@ -118,13 +118,14 @@ export class Inspector {
       socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Inspector connection failed')); }, { once: true });
     }); return new Inspector(socket);
   }
-  async evaluate(expression) {
+  async evaluate(expression, { awaitPromise = true } = {}) {
+    check(typeof awaitPromise === 'boolean', 'Inspector awaitPromise must be boolean');
     const label = expression.includes('packagedWindowState') ? 'window-state' : expression.includes('querySelector') ? 'renderer-welcome' : expression.includes('capturePage') ? 'screenshot' : expression.includes('ownership.quit') ? 'graceful-quit' : 'packaged-action';
     const id = ++this.id;
     const result = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Inspector evaluation timed out: ' + label)); }, 20000);
       this.pending.set(id, { resolve, reject, timer, method: 'Runtime.evaluate', label });
-      this.socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
+      this.socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise } }));
     });
     check(!result.exceptionDetails, `Packaged Electron evaluation failed: ${result.exceptionDetails?.exception?.description?.slice(0, 400) ?? ''}`);
     return result.result?.value;
@@ -167,7 +168,10 @@ export async function waitForUpgradeWindow(inspector, context, deadline, observe
   const observations = []; let state;
   try {
     while (Date.now() < deadline) {
-      const observation = await inspector.evaluate(`(${packagedWindowState.toString()})()`);
+      // This probe returns an immediate object. Awaiting a V8 wrapper Promise
+      // during Electron bootstrap can fail with "Promise was collected".
+      // Renderer, screenshot and update-service probes still await their work.
+      const observation = await inspector.evaluate(`(${packagedWindowState.toString()})()`, { awaitPromise: false });
       observations.push(observation);
       if (observation?.ready === true) {
         state = observation.state;

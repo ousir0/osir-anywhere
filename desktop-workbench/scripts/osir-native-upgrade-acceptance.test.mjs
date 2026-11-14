@@ -103,6 +103,23 @@ test('inspector success, JavaScript exceptions and foreign errors retain existin
   } finally { inspector.close(); }
 });
 
+test('window-state inspector reads synchronously while asynchronous probes remain awaited', async () => {
+  const socket = new SyntheticInspectorSocket(), inspector = new Inspector(socket);
+  try {
+    const sync = inspector.evaluate('(packagedWindowState)()', { awaitPromise: false });
+    assert.equal(socket.requests[0].params.awaitPromise, false);
+    assert.equal(socket.requests[0].params.returnByValue, true);
+    socket.reply({ id: 1, result: { result: { value: { ready: false, reason: 'node-process-not-ready' } } } });
+    assert.equal((await sync).ready, false);
+    const asyncProbe = inspector.evaluate('Promise.resolve({updated:true})');
+    assert.equal(socket.requests[1].params.awaitPromise, true);
+    socket.reply({ id: 2, result: { result: { value: { updated: true } } } });
+    assert.equal((await asyncProbe).updated, true);
+    await assert.rejects(inspector.evaluate('ignored', { awaitPromise: 'false' }), /must be boolean/);
+    assert.equal(socket.requests.length, 2);
+  } finally { inspector.close(); }
+});
+
 test('startup and welcome keep their last observations when an inspector protocol error aborts the phase', async () => {
   const socket = new SyntheticInspectorSocket(), inspector = new Inspector(socket);
   try {
@@ -147,7 +164,7 @@ test('startup waits for Electron and loaded window, preserving failed phase obse
   const state = { pid: 42, packaged: true, electron: '39.8.10', name: 'OSIR Anywhere', version: '2.1.0', platform: process.platform, arch: process.arch, resources: context.resources, home: root, userData: join(root, 'data'), windows: [window] };
   const observations = [{ ready: false, reason: 'electron-module-not-ready' }, { ready: true, state: { ...state, windows: [{ ...window, loading: true }] } }, { ready: true, state }];
   let count = 0, recorded;
-  const result = await waitForUpgradeWindow({ evaluate: async () => observations[count++] }, context, Date.now() + 2500, async value => { recorded = value; });
+  const result = await waitForUpgradeWindow({ evaluate: async (_source, options) => { assert.deepEqual(options, { awaitPromise: false }); return observations[count++]; } }, context, Date.now() + 2500, async value => { recorded = value; });
   assert.deepEqual(result, { state, window }); assert.equal(count, 3); assert.deepEqual(recorded, observations);
   let failed;
   await assert.rejects(waitForUpgradeWindow({ evaluate: async () => ({ ready: false, reason: 'electron-module-not-ready' }) }, context, Date.now() + 30, async value => { failed = value; }), /readiness timed out/);
