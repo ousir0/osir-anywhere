@@ -3,7 +3,7 @@
 // repackage, re-sign, publish, or synthesize native acceptance.
 import { execFileSync } from 'node:child_process';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SHA, bytes, check, digest, fingerprint, immutableFile, inspect, matches, within } from './osir-anywhere-release-common.mjs';
 import { bindInputs, fingerprintTree, validateSpec } from './osir-native-smoke.mjs';
@@ -213,6 +213,37 @@ async function warmEvidence(spec, prep) {
   return { report, names: [...names] };
 }
 
+export function cacheTarCommand(prep, output, names, platform = process.platform, env = process.env) {
+  const paths = platform === 'win32' ? win32 : posix;
+  check(paths.isAbsolute(prep) && paths.isAbsolute(output), 'Absolute native cache tar directories required');
+  for (const name of names) safeName(name);
+  let executable = '/usr/bin/tar';
+  if (platform === 'win32') {
+    const root = env.SystemRoot;
+    check(typeof root === 'string' && /^[A-Za-z]:[\\/]/.test(root) && win32.isAbsolute(root), 'Native Windows SystemRoot required; refusing PATH tar fallback');
+    executable = win32.join(root, 'System32', 'tar.exe');
+  }
+  // A drive-qualified -f D:\... can be parsed as a remote archive by a PATH
+  // tar. Use native system tar and a relative archive in the owned output cwd.
+  return { executable, args: ['-cf', 'offline-cache.tar', '-C', prep, 'cache', ...names],
+    options: { cwd: output, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', timeout: 300000, maxBuffer: 64 * 1024 } };
+}
+
+export async function archiveCache(prep, output, names) {
+  const invocation = cacheTarCommand(prep, output, names);
+  try { execFileSync(invocation.executable, invocation.args, invocation.options); }
+  catch (error) {
+    const stderr = String(error.stderr ?? '').slice(0, 8192);
+    const failure = { schemaVersion: 1, scope: 'native-cache-tar-seal', result: 'failed',
+      executable: invocation.executable, args: invocation.args, cwd: output,
+      status: Number.isInteger(error.status) ? error.status : null,
+      signal: typeof error.signal === 'string' ? error.signal.slice(0, 80) : null,
+      code: typeof error.code === 'string' ? error.code.slice(0, 80) : null, stderr };
+    await immutableFile(join(output, 'cache-seal-failure.json'), bytes(failure));
+    throw Error(`Native cache tar failed (exit=${failure.status}, signal=${failure.signal}, code=${failure.code}): ${stderr.slice(0, 2000)}`);
+  }
+}
+
 export async function sealCache(spec, prep, output, harness) {
   check(isAbsolute(prep) && isAbsolute(output) && !within(prep, output) && !within(output, prep), 'Cache bundle must be independent of online preparation');
   const { report, names } = await warmEvidence(spec, prep);
@@ -221,7 +252,7 @@ export async function sealCache(spec, prep, output, harness) {
   const archive = join(output, 'offline-cache.tar');
   // tar preserves uv cache links and executable permissions; upload-artifact's
   // own zip serialization is not used for the cache tree itself.
-  execFileSync('tar', ['-cf', archive, '-C', prep, 'cache', ...names], { stdio: 'ignore', timeout: 300000 });
+  await archiveCache(prep, output, names);
   check(report.cache.sha256 === await fingerprintTree(join(prep, 'cache')), 'Cache changed while archiving');
   const transfer = { schemaVersion: 1, scope: 'native-offline-cache-transfer', harness, nativeMachine: spec.runner.nativeMachine, expected: spec.expected,
     originalReceiptSha256: (await inspect(spec.buildReceiptPath)).sha256, archive: await inspect(archive), reportSha256: (await inspect(join(prep, 'dependency-cache.json'))).sha256,

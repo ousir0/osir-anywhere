@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bytes, digest, fingerprint, inspect } from './osir-anywhere-release-common.mjs';
 import { fingerprintTree } from './osir-native-smoke.mjs';
 import { parseArguments as provisionArguments } from './osir-native-smoke-provision.mjs';
-import { REPOSITORY, acceptanceMatrix, bindDownloadedArtifact, collectEvidence, githubMetadata, reviewedBindings, sealCache, unpackCache, unpackProductArchive, verifyHarness, verifyHarnessFiles, verifyProducer, verifyRemoteArtifacts, verifySmokeReport } from './osir-artifact-acceptance-ci.mjs';
+import { REPOSITORY, acceptanceMatrix, archiveCache, bindDownloadedArtifact, cacheTarCommand, collectEvidence, githubMetadata, reviewedBindings, sealCache, unpackCache, unpackProductArchive, verifyHarness, verifyHarnessFiles, verifyProducer, verifyRemoteArtifacts, verifySmokeReport } from './osir-artifact-acceptance-ci.mjs';
 
 const A = 'a'.repeat(40), B = 'b'.repeat(40), H = 'c'.repeat(40), X = '1'.repeat(64);
 const harness = { repository: REPOSITORY, commit: H, runId: 77, runAttempt: 2 };
@@ -157,6 +157,55 @@ test('separate-job cache transfer preserves symlinks, raw evidence and exact res
   await assert.rejects(unpackCache(f.spec, bundle, join(f.root, 'other-harness'), { ...harness, commit: A }), /another reviewed harness/);
   const changedSpec = clone(f.spec); changedSpec.runner.nativeMachine = 'darwin-x64';
   await assert.rejects(unpackCache(changedSpec, bundle, join(f.root, 'other-machine'), harness), /architecture/);
+});
+
+test('Windows native tar selection ignores PATH and drive-qualified archive syntax; spaces remain distinct argv', () => {
+  const command = cacheTarCommand('D:\\work space\\warm', 'D:\\work space\\bundle', ['dependency-cache.json'], 'win32',
+    { SystemRoot: 'C:\\Windows', PATH: 'C:\\Program Files\\Git\\usr\\bin' });
+  assert.equal(command.executable, 'C:\\Windows\\System32\\tar.exe');
+  assert.deepEqual(command.args, ['-cf', 'offline-cache.tar', '-C', 'D:\\work space\\warm', 'cache', 'dependency-cache.json']);
+  assert.equal(command.options.cwd, 'D:\\work space\\bundle');
+  assert.deepEqual(command.options.stdio, ['ignore', 'ignore', 'pipe']);
+  for (const SystemRoot of [undefined, '', 'Windows', '\\\\host\\Windows']) {
+    assert.throws(() => cacheTarCommand('D:\\warm', 'D:\\bundle', [], 'win32', { SystemRoot }), /SystemRoot/);
+  }
+  assert.throws(() => cacheTarCommand('D:\\warm', 'D:\\bundle', ['--dereference'], 'win32', { SystemRoot: 'C:\\Windows' }), /Unsafe/);
+});
+
+test('POSIX selects system tar with relative archive and real seal/extract preserves executable mode and symlink', async t => {
+  if (process.platform === 'win32') { t.skip('POSIX permission integration; Windows native acceptance is separate'); return; }
+  const f = await fixture(t), { prep, report } = await prepFixture(f);
+  const executable = join(prep, 'cache/archive/payload'); await chmod(executable, 0o755);
+  const bundle = join(f.root, 'bundle with spaces'), offline = join(f.root, 'offline with spaces');
+  const selected = cacheTarCommand(prep, bundle, ['dependency-cache.json']);
+  assert.equal(selected.executable, '/usr/bin/tar');
+  assert.equal(selected.args[1], 'offline-cache.tar'); assert.equal(selected.options.cwd, bundle);
+  const sealed = await sealCache(f.spec, prep, bundle, harness);
+  assert.equal(sealed.cacheSha256, report.cache.sha256);
+  await unpackCache(f.spec, bundle, offline, harness);
+  assert.equal((await lstat(join(offline, 'cache/archive/payload'))).mode & 0o777, 0o755);
+  assert.equal(await readlink(join(offline, 'cache/alias')), 'archive/payload');
+  assert.equal(await fingerprintTree(join(offline, 'cache')), report.cache.sha256);
+});
+
+test('real tar failure preserves bounded stderr/status and never creates a passed transfer', async t => {
+  const f = await fixture(t), prep = join(f.root, 'missing input'), output = join(f.root, 'failed output');
+  await mkdir(output);
+  await assert.rejects(archiveCache(prep, output, ['dependency-cache.json']), /Native cache tar failed/);
+  const failure = JSON.parse(await readFile(join(output, 'cache-seal-failure.json'), 'utf8'));
+  assert.equal(failure.result, 'failed'); assert.ok(failure.status !== 0 || failure.code !== null);
+  assert.ok(failure.stderr.length > 0 && failure.stderr.length <= 8192);
+  assert.equal(failure.args[1], 'offline-cache.tar'); assert.equal(failure.cwd, output);
+  await assert.rejects(readFile(join(output, 'cache-transfer.json')), { code: 'ENOENT' });
+});
+
+test('real verbose tar failure truncates raw stderr to the evidence limit', async t => {
+  const f = await fixture(t), prep = join(f.root, 'empty prep'), output = join(f.root, 'verbose failure');
+  await mkdir(prep); await mkdir(output);
+  const names = Array.from({ length: 90 }, (_, i) => `missing-${i}-${'x'.repeat(150)}`);
+  await assert.rejects(archiveCache(prep, output, names), /Native cache tar failed/);
+  const failure = JSON.parse(await readFile(join(output, 'cache-seal-failure.json'), 'utf8'));
+  assert.equal(failure.stderr.length, 8192); assert.equal(failure.result, 'failed');
 });
 
 test('corrupt cache archive cannot be unpacked; modified report lock/cache cannot be sealed', async t => {
