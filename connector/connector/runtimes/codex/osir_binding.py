@@ -24,6 +24,9 @@ POLICY_ENV = "OSIR_CLIENT_MODEL_BINDING"
 POLICY_REQUIRED = "required-v1"
 HOME_ENV = "OSIR_CLIENT_BINDING_HOME"
 MAXIMUM = 2 * 1024 * 1024
+# Native model catalogs include model instructions and exceed the descriptor's
+# small limit even when the authorized model list itself is short.
+CATALOG_MAXIMUM = 16 * 1024 * 1024
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
 _FIELDS = {"schemaVersion", "source", "available", "expiresAtMs", "errorCode",
     "codexHome", "connectionMode", "defaultModel", "defaultReasoningEffort",
@@ -54,6 +57,9 @@ def canonical_directory(value) -> Path:
 
 
 def read_secure(path: Path, *, private=False, maximum=MAXIMUM) -> bytes:
+    if (type(maximum) is not int or type(private) is not bool
+            or not 0 <= maximum <= (MAXIMUM if private else CATALOG_MAXIMUM)):
+        raise ModelBindingUnavailable()
     if os.name == "nt":
         from .osir_binding_windows import read_secure as windows_read
         return windows_read(path, private=private, maximum=maximum)
@@ -176,7 +182,7 @@ class LocalCodexBinding:
             if pointer:
                 catalog = Path(pointer)
                 catalog = catalog if catalog.is_absolute() else home / catalog
-                if hashlib.sha256(read_secure(catalog)).hexdigest() != catalog_hash:
+                if hashlib.sha256(read_secure(catalog, maximum=CATALOG_MAXIMUM)).hexdigest() != catalog_hash:
                     raise ModelBindingUnavailable()
             elif catalog_hash != "":
                 raise ModelBindingUnavailable()
@@ -217,7 +223,7 @@ class LocalCodexBinding:
             # Detect a concurrent publisher/config write during this sample.
             if hashlib.sha256(read_secure(home / "config.toml")).hexdigest() != binding.config_fingerprint:
                 raise ModelBindingUnavailable()
-            if pointer and hashlib.sha256(read_secure(catalog)).hexdigest() != catalog_hash:
+            if pointer and hashlib.sha256(read_secure(catalog, maximum=CATALOG_MAXIMUM)).hexdigest() != catalog_hash:
                 raise ModelBindingUnavailable()
             if read_secure(self.path, private=True) != descriptor:
                 raise ModelBindingUnavailable()

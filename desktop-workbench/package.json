@@ -2,7 +2,7 @@
   "name": "osir-anywhere-desktop-workbench",
   "productName": "OSIR Anywhere",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Electron shell for the OSIR Anywhere workbench",
   "packageManager": "yarn@4.6.0",
   "workspaces": [
@@ -21,7 +21,7 @@
     "dev": "yarn build:main && node scripts/dev.mjs",
     "start": "yarn ensure:uv && yarn build:main && electron .",
     "build:web": "node scripts/build-web.mjs",
-    "build": "yarn build:main && yarn build:web",
+    "build": "yarn build:main && yarn build:web && yarn bundle:dsh-bridge",
     "ensure:uv": "node scripts/ensure-uv.mjs",
     "bundle:uv": "node scripts/prepare-uv.mjs",
     "bundle:python": "node scripts/prepare-python.mjs",
@@ -29,7 +29,8 @@
     "dist": "node scripts/dist-desktop.mjs",
     "dist:mac": "node scripts/dist-desktop.mjs mac",
     "dist:win": "node scripts/dist-desktop.mjs win",
-    "measure:poc": "node scripts/measure-desktop-poc.mjs"
+    "measure:poc": "node scripts/measure-desktop-poc.mjs",
+    "bundle:dsh-bridge": "node scripts/osir-dsh-bridge.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.2",
@@ -100,6 +101,14 @@
         "to": "python",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "dist/dsh-bridge",
+        "to": "dsh-bridge",
+        "filter": [
+          "osir-dsh-bridge.tgz",
+          "package-info.json"
         ]
       }
     ],

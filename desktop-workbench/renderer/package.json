@@ -1,7 +1,7 @@
 {
   "name": "osir-anywhere-desktop-renderer",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "packageManager": "yarn@4.6.0",
   "type": "module",
   "scripts": {

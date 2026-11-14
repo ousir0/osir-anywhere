@@ -18,6 +18,7 @@ from typing import NamedTuple
 
 _DWORD, _WORD, _BYTE, _BOOL, _HANDLE = C.c_uint32, C.c_uint16, C.c_ubyte, C.c_int32, C.c_void_p
 _MAXIMUM = 2 * 1024 * 1024
+_CATALOG_MAXIMUM = 16 * 1024 * 1024
 _READ_CONTROL = 0x20000
 _REPARSE, _DIRECTORY = 0x400, 0x10
 _OPEN_REPARSE, _BACKUP_SEMANTICS = 0x200000, 0x2000000
@@ -361,7 +362,8 @@ def canonical_directory(path: Path) -> Path:
 
 def read_secure(path: Path, *, private=False, maximum=_MAXIMUM) -> bytes:
     """Read from the same owner-checked handle, or raise a fixed OSError."""
-    if type(maximum) is not int or not 0 <= maximum <= _MAXIMUM or type(private) is not bool:
+    if (type(maximum) is not int or type(private) is not bool
+            or not 0 <= maximum <= (_MAXIMUM if private else _CATALOG_MAXIMUM)):
         _deny('invalid-read-limit')
     api, value = _api(), _normal_path(path)
     identity = api.identity()

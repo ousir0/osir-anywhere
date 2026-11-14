@@ -61,6 +61,8 @@ jobs:
         with:
           path: ${{ runner.temp }}/osir-yarn-downloads
           key: osir-yarn-resolve-node22-${{ inputs.recipe_sha256 }}-${{ hashFiles('desktop-workbench/package.json', 'desktop-workbench/renderer/package.json', 'desktop-workbench/.yarnrc.yml') }}
+          restore-keys: |
+            osir-yarn-resolve-node22-
       - name: Resolve dependency lock exactly once
         working-directory: desktop-workbench
         run: |
@@ -127,6 +129,8 @@ jobs:
             desktop-workbench/.cache/uv
             desktop-workbench/.cache/python
           key: osir-downloads-${{ matrix.target }}-node22-${{ inputs.recipe_sha256 }}-${{ needs.resolve.outputs.lock_sha256 }}-${{ hashFiles('desktop-workbench/scripts/prepare-uv.mjs', 'desktop-workbench/scripts/prepare-python.mjs') }}
+          restore-keys: |
+            osir-downloads-${{ matrix.target }}-node22-
       - name: Immutable install with shared lock, without scripts or secrets
         if: inputs.target == matrix.target || (inputs.target == 'all' && matrix.target != 'win32-arm64')
         working-directory: desktop-workbench

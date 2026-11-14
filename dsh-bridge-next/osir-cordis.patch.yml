@@ -1,0 +1,4 @@
+- insert:
+    - id: osir-anywhere-dsh-bridge
+      name: '@osir/anywhere-dsh-bridge'
+      config: {}
