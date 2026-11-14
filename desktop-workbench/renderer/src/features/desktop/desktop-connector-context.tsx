@@ -103,7 +103,7 @@ type DesktopConnectorContextValue = {
   binding: DesktopLocalBinding | null
   isLocalConnector: (connectorId: string) => boolean
   refresh: () => Promise<void>
-  retryProvision: () => void
+  retryProvision: () => Promise<boolean>
   reconnect: () => Promise<boolean>
   disconnect: () => Promise<boolean>
   start: () => Promise<boolean>
@@ -139,11 +139,7 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
   const [binding, setBinding] = React.useState<DesktopLocalBinding | null>(null)
   const [reconnectPromptOpen, setReconnectPromptOpen] = React.useState(false)
   const [remoteReconnectName, setRemoteReconnectName] = React.useState<string | null>(null)
-  const provisionAttemptRef = React.useRef<{
-    key: string
-    promise: Promise<DesktopLocalBinding>
-    completed: boolean
-  } | null>(null)
+  const connectionActionRef = React.useRef<Promise<boolean> | null>(null)
   const connectionCheckRef = React.useRef<AbortController | null>(null)
   const reconnectPromptDismissedRef = React.useRef<string | null>(null)
   const intentionalDisconnectConnectorIdRef = React.useRef<string | null>(null)
@@ -229,37 +225,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     }
   }, [applyState, beginConnectionCheck, finishConnectionCheck, refreshData, showConnectionFailure, t])
 
-  // This is called only by the explicit Connect/Retry action, never by login.
-  const retryProvision = React.useCallback(() => {
-    const bridge = getDesktopWorkbenchBridge()
-    const userToken = session?.accessToken
-    const userId = session?.userId
-    if (busy || !userToken || !userId || !bridge?.device || !bridge.connector ||
-        provisionAttemptRef.current && !provisionAttemptRef.current.completed) return
-    const controller = beginConnectionCheck()
-    const attempt = { key: userId, promise: bridge.device.createAndConnect({ userToken, userId }), completed: false }
-    provisionAttemptRef.current = attempt
-    setBusy(true)
-    setProvisionError(null)
-    setProvisionErrorPromptOpen(false)
-    setConnectionStatus("connecting")
-    void (async () => {
-      try {
-        const created = await attempt.promise
-        if (controller.signal.aborted) return
-        setBinding(created)
-        await waitUntilOnline({ userToken, connectorId: created.connectorId, controller })
-      } catch {
-        if (!controller.signal.aborted) showConnectionFailure(t("provisionFailed"))
-      } finally {
-        attempt.completed = true
-        setBusy(false)
-        setLoading(false)
-        finishConnectionCheck(controller)
-      }
-    })()
-  }, [busy, session?.accessToken, session?.userId, beginConnectionCheck, finishConnectionCheck, waitUntilOnline, showConnectionFailure, t])
-
   const refresh = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()
     if (!bridge?.device || !bridge.connector) {
@@ -308,57 +273,68 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
     void refresh().catch(() => { setLoading(false) })
   }, [refresh, session?.userId])
 
-  const reconnect = React.useCallback(async () => {
+  const reconnect = React.useCallback((): Promise<boolean> => {
+    if (connectionActionRef.current) return connectionActionRef.current
     const accessToken = session?.accessToken
     const userId = session?.userId
-    const bridge = getDesktopWorkbenchBridge()
-    if (!accessToken || !userId || !bridge?.device || busy) return false
+    const device = getDesktopWorkbenchBridge()?.device
+    if (!accessToken || !userId || !device || busy) return Promise.resolve(false)
     setBusy(true)
     setConnectionStatus("connecting")
     setProvisionError(null)
-    try {
-      const reconnected = await bridge.device.reconnectAndConnect({
-        userToken: accessToken,
-        userId,
-        connectorId: binding?.connectorId ?? state?.connectorId ?? undefined,
-      })
-      intentionalDisconnectConnectorIdRef.current = null
-      reconnectPromptDismissedRef.current = null
-      setBinding(reconnected)
-      setReconnectPromptOpen(false)
-      await refresh()
-      const onlineResult = await waitUntilOnline({
-        userToken: accessToken,
-        connectorId: reconnected.connectorId,
-      })
-      if (onlineResult === "cancelled") return false
-      if (onlineResult === "reconnect-required") {
-        setConnectionStatus("disconnected")
-        toast.error(t("reconnectFailed"))
+    setProvisionErrorPromptOpen(false)
+    // Publish one promise before another click can start a second device request.
+    const attempt = Promise.resolve().then(async () => {
+      try {
+        // Read the durable binding on every explicit attempt: a previous failed
+        // startup may already have created the device before returning an error.
+        const localBinding = await device.getLocalBinding()
+        const reconnected = localBinding
+          ? await device.reconnectAndConnect({
+            userToken: accessToken,
+            userId,
+            connectorId: localBinding.connectorId,
+          })
+          : await device.createAndConnect({ userToken: accessToken, userId })
+        intentionalDisconnectConnectorIdRef.current = null
+        reconnectPromptDismissedRef.current = null
+        setBinding(reconnected)
+        setReconnectPromptOpen(false)
+        await refresh()
+        const onlineResult = await waitUntilOnline({
+          userToken: accessToken,
+          connectorId: reconnected.connectorId,
+        })
+        if (onlineResult === "cancelled") return false
+        if (onlineResult === "reconnect-required") {
+          setConnectionStatus("disconnected")
+          toast.error(t("reconnectFailed"))
+          return false
+        }
+        if (onlineResult === "timeout") {
+          toast.error(t("onlineTimeout"))
+          return false
+        }
+        toast.success(t(localBinding ? "reconnected" : "started"))
+        return true
+      } catch (error) {
+        const message = error instanceof Error ? error.message : t("reconnectFailed")
+        showConnectionFailure(message)
+        toast.error(message)
         return false
+      } finally {
+        connectionActionRef.current = null
+        setBusy(false)
       }
-      if (onlineResult === "timeout") {
-        toast.error(t("onlineTimeout"))
-        return false
-      }
-      toast.success(t("reconnected"))
-      return true
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("reconnectFailed"))
-      return false
-    } finally {
-      setBusy(false)
-    }
-  }, [
-    binding?.connectorId,
-    busy,
-    refresh,
-    session?.accessToken,
-    session?.userId,
-    state?.connectorId,
-    t,
-    waitUntilOnline,
-  ])
+    })
+    connectionActionRef.current = attempt
+    return attempt
+  }, [busy, refresh, session?.accessToken, session?.userId, showConnectionFailure, t, waitUntilOnline])
+
+  // Connect, restart and retry share the explicit consent path and in-flight request.
+  const start = reconnect
+  const restart = reconnect
+  const retryProvision = reconnect
 
   const disconnect = React.useCallback(async () => {
     const accessToken = session?.accessToken
@@ -388,74 +364,6 @@ export function DesktopConnectorProvider({ children }: { children: React.ReactNo
       setBusy(false)
     }
   }, [binding?.connectorId, busy, refresh, refreshData, session?.accessToken, session?.userId, state?.connectorId, t])
-
-  const start = React.useCallback(async () => {
-    const accessToken = session?.accessToken
-    const connectorId = binding?.connectorId ?? state?.connectorId
-    const bridge = getDesktopWorkbenchBridge()
-    if (!accessToken || !connectorId || !bridge?.connector || busy) return false
-    setBusy(true)
-    setConnectionStatus("connecting")
-    setProvisionError(null)
-    try {
-      applyState(await bridge.connector.start())
-      const onlineResult = await waitUntilOnline({
-        userToken: accessToken,
-        connectorId,
-      })
-      if (onlineResult === "cancelled") return false
-      if (onlineResult === "reconnect-required") {
-        setConnectionStatus("disconnected")
-        return false
-      }
-      if (onlineResult === "timeout") {
-        toast.error(t("onlineTimeout"))
-        return false
-      }
-      toast.success(t("started"))
-      return true
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t("startFailed")
-      showConnectionFailure(message)
-      toast.error(message)
-      return false
-    } finally {
-      setBusy(false)
-    }
-  }, [
-    applyState,
-    binding?.connectorId,
-    busy,
-    session?.accessToken,
-    showConnectionFailure,
-    state?.connectorId,
-    t,
-    waitUntilOnline,
-  ])
-
-  const restart = React.useCallback(async () => {
-    const accessToken = session?.accessToken
-    const connectorId = binding?.connectorId ?? state?.connectorId
-    const bridge = getDesktopWorkbenchBridge()
-    if (!accessToken || !connectorId || !bridge?.connector || busy) return false
-    setBusy(true)
-    setConnectionStatus("connecting")
-    try {
-      applyState(await bridge.connector.restart())
-      const onlineResult = await waitUntilOnline({ userToken: accessToken, connectorId })
-      if (onlineResult !== "online") {
-        if (onlineResult === "timeout") toast.error(t("onlineTimeout"))
-        return false
-      }
-      toast.success(t("restarted"))
-      return true
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("restartFailed"))
-      return false
-    } finally {
-      setBusy(false)
-    }
-  }, [applyState, binding?.connectorId, busy, session?.accessToken, state?.connectorId, t, waitUntilOnline])
 
   const stop = React.useCallback(async () => {
     const bridge = getDesktopWorkbenchBridge()

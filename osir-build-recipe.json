@@ -1,5 +1,5 @@
 {
-  "releaseId": "osir-anywhere-2.2.1-20261114-runtime-r1",
+  "releaseId": "osir-anywhere-2.2.1-20261114-runtime-r2",
   "config": {
     "OSIR_IDENTITY_API_ORIGIN": "https://osirclaw.com",
     "OSIR_IDENTITY_WEB_ORIGIN": "https://osirclaw.com",

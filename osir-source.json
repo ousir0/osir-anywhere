@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "upstreamGitHead": "0900e431bef40c69d043e5af6e74431f30d0ea2d",
-  "sourceSha256": "50f155a61d75222134446cdb094645faa80677ea80a66a0fa02a578ca3fc85ad",
+  "upstreamGitHead": "a85a573f7a424eb1ca557fc43b8d84e4d8ec000d",
+  "sourceSha256": "5712a25a90d626219812500fa6c0b247a560cea5d77a78fb603f219b5911115e",
   "files": [
     {
       "path": ".gitattributes",
@@ -23,8 +23,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "76b3f361f6368c7f71939e3735a8d9d443e174196db0fcc3bd45b29de612c3ca",
-      "size": 846,
+      "sha256": "1b3dbcca85b9240657aa50f6ecaf99025feb40e8c1c07dcc463d127774ca157f",
+      "size": 1060,
       "executable": false
     },
     {
@@ -4319,8 +4319,8 @@
     },
     {
       "path": "desktop-workbench/renderer/src/features/desktop/desktop-connector-context.tsx",
-      "sha256": "61e1ee7b6418ac295d0792332bad72bef469add5719e687b9ae6061f960300db",
-      "size": 23876,
+      "sha256": "6894bd21dc2c11b8bc72cd72b4dafe363ec9ce2be77587a0e328da8b37bcdf81",
+      "size": 21148,
       "executable": false
     },
     {
@@ -4667,8 +4667,8 @@
     },
     {
       "path": "desktop-workbench/renderer/test/desktop-connector-consent.test.mjs",
-      "sha256": "3c8e6bdb17c338d87b76f56453e624120bc62fb4279234a79f6b544e8114806b",
-      "size": 3300,
+      "sha256": "71754bef503c2368dc61426b694d3c71f85a6b39614b96b0fa786ef555205533",
+      "size": 7709,
       "executable": false
     },
     {
@@ -5549,7 +5549,7 @@
     },
     {
       "path": "osir-build-recipe.json",
-      "sha256": "2f9e9ab2b224b2d41e20e002132d3f6ad63773507271ecaf85bc323ef1ed01fa",
+      "sha256": "ed0c42acc6f5e663c3e35a13b35a1e21e4f6b5b2dd20089646f99869be338d87",
       "size": 928,
       "executable": false
     },
