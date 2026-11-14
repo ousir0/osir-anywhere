@@ -15,7 +15,7 @@ const WORKFLOW = '.github/workflows/osir-anywhere-native-build.yml';
 const TARGETS = ['darwin-universal', 'win32-x64', 'win32-arm64'];
 export const HARNESS_FILES = [
   '.github/workflows/osir-anywhere-artifact-acceptance.yml',
-  ...['osir-artifact-acceptance-ci.mjs', 'osir-artifact-acceptance-ci.test.mjs', 'osir-native-smoke.mjs', 'osir-native-smoke-provision.mjs',
+  ...['osir-artifact-acceptance-ci.mjs', 'osir-artifact-acceptance-ci.test.mjs', 'osir-native-smoke.mjs', 'osir-native-smoke.startup.test.mjs', 'osir-native-smoke-provision.mjs',
     'osir-anywhere-system-signature.mjs', 'osir-anywhere-release-common.mjs', 'osir-windows-native-observation.mjs',
     'osir-windows-native-observation.test.mjs'].map(name => `desktop-workbench/scripts/${name}`),
 ];

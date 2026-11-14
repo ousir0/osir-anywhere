@@ -224,7 +224,7 @@ export async function command(executable, args, { env, cwd, timeout = 60000, inp
   });
 }
 
-class Inspector {
+export class Inspector {
   constructor(socket) {
     this.socket = socket; this.next = 0; this.pending = new Map();
     socket.addEventListener('message', event => {
@@ -245,12 +245,13 @@ class Inspector {
     });
     return new Inspector(socket);
   }
-  async evaluate(expression) {
+  async evaluate(expression, { awaitPromise = true } = {}) {
+    check(typeof awaitPromise === 'boolean', 'Inspector awaitPromise must be boolean');
     const id = ++this.next;
     const value = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Electron inspector evaluation timed out')); }, 10000);
       this.pending.set(id, { resolve, reject, timer });
-      this.socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
+      this.socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true } }));
     });
     check(!value.exceptionDetails, 'Electron inspector expression failed');
     return value.result?.value;
@@ -262,6 +263,45 @@ class Inspector {
 }
 
 const ELECTRON = "process.getBuiltinModule('module').createRequire(process.resourcesPath + '/app.asar/package.json')('electron')";
+// Match the already-corrected upgrade probe: the inspector is reachable before
+// Electron's module loader/app is ready. Only explicit bootstrap states wait;
+// arbitrary packaged exceptions remain failures. This probe is synchronous.
+export function packagedSmokeWindowState() {
+  if (typeof process === 'undefined' || !process.versions) return { ready: false, reason: 'node-process-not-ready' };
+  if (process.type !== 'browser' || !process.versions.electron) return { ready: false, reason: 'electron-browser-not-ready' };
+  const require = process.getBuiltinModule('module').createRequire(process.resourcesPath + '/app.asar/package.json');
+  let electron;
+  try { electron = require('electron'); }
+  catch (error) {
+    if (error.code === 'MODULE_NOT_FOUND' && error.message.split('\n')[0] === "Cannot find module 'electron'") return { ready: false, reason: 'electron-module-not-ready' };
+    throw error;
+  }
+  const { app, BrowserWindow } = electron;
+  if (!app.isReady()) return { ready: false, reason: 'electron-app-not-ready' };
+  return { ready: true, state: { pid: process.pid, name: app.getName(), version: app.getVersion(), packaged: app.isPackaged,
+    electron: process.versions.electron, arch: process.arch, platform: process.platform, resources: process.resourcesPath,
+    home: app.getPath('home'), userData: app.getPath('userData'),
+    windows: BrowserWindow.getAllWindows().map(w => ({ id: w.id, visible: w.isVisible(), destroyed: w.isDestroyed(), loading: w.webContents.isLoading(),
+      width: w.getBounds().width, height: w.getBounds().height, url: w.webContents.getURL(), rendererPid: w.webContents.getOSProcessId() })) } };
+}
+
+export async function waitForSmokeWindow(inspector, context, deadline, observe = async () => {}) {
+  const observations = []; let state;
+  try {
+    while (Date.now() < deadline) {
+      const observation = await inspector.evaluate(`(${packagedSmokeWindowState.toString()})()`, { awaitPromise: false });
+      observations.push(observation);
+      if (observation?.ready === true) {
+        state = observation.state;
+        try { return { state, window: validateWindow(state, context) }; } catch { /* A window may still be loading. */ }
+      } else check(observation?.ready === false && ['node-process-not-ready', 'electron-browser-not-ready', 'electron-module-not-ready', 'electron-app-not-ready'].includes(observation.reason), 'Invalid packaged startup observation');
+      await pause(250);
+    }
+    if (state) validateWindow(state, context);
+    throw new Error('Packaged Electron startup readiness timed out');
+  } finally { await observe(observations); }
+}
+
 export function validateWindowsMetadata(metadata, version) {
   const exact = value => value === version || value === `${version}.0`;
   check(metadata?.ProductName === PRODUCT && exact(metadata.ProductVersion) && exact(metadata.FileVersion), 'Installed Windows product/version mismatch');
@@ -294,13 +334,8 @@ async function launchWindow(executable, resources, context) {
       check(Date.now() < deadline, 'Packaged Electron inspector not available'); await pause(100);
     }
     inspector = await Inspector.connect(url);
-    let state, window;
-    while (Date.now() < deadline) {
-      state = await inspector.evaluate(`(() => { const {app,BrowserWindow}=${ELECTRON}; return {pid:process.pid,name:app.getName(),version:app.getVersion(),packaged:app.isPackaged,electron:process.versions.electron,arch:process.arch,platform:process.platform,resources:process.resourcesPath,home:app.getPath('home'),userData:app.getPath('userData'),windows:BrowserWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),destroyed:w.isDestroyed(),loading:w.webContents.isLoading(),width:w.getBounds().width,height:w.getBounds().height,url:w.webContents.getURL(),rendererPid:w.webContents.getOSProcessId()}))}; })()`);
-      try { window = validateWindow(state, { ...context, resources, pid: child.pid }); break; }
-      catch { await pause(250); }
-    }
-    window = validateWindow(state, { ...context, resources, pid: child.pid });
+    const { state, window } = await waitForSmokeWindow(inspector, { ...context, resources, pid: child.pid }, deadline,
+      observations => context.evidence('electron-startup-readiness.json', JSON.stringify(observations, null, 2)));
     let welcome;
     while (Date.now() < deadline) {
       welcome = await inspector.evaluate(`(async()=>{const w=${ELECTRON}.BrowserWindow.fromId(${window.id});return w.webContents.executeJavaScript(${JSON.stringify("(() => { const h=document.querySelector('h1'); const b=document.querySelector('button'); const r=b?.getBoundingClientRect(); const s=b&&getComputedStyle(b); return {ready:document.readyState==='complete',branded:!!h?.textContent?.includes('OSIR Anywhere'),action:b?{text:b.textContent?.trim(),enabled:!b.disabled,visible:!!r&&r.width>0&&r.height>0&&s.display!=='none'&&s.visibility==='visible'}:null}; })()")});})()`);
