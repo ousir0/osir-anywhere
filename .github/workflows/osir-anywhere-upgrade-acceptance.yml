@@ -96,6 +96,7 @@ jobs:
             /desktop-workbench/electron/update-version.ts
             /desktop-workbench/electron/update-download.ts
             /desktop-workbench/electron/release-manifest.ts
+            /desktop-workbench/electron/release-build-info.ts
       - name: Install isolated test tools without product install scripts
         run: npm install --prefix "$RUNNER_TEMP/osir-upgrade-test-tools" --ignore-scripts --no-audit --no-fund @electron/asar@3.4.1 typescript@6.0.3
       - name: Focused contracts and synthetic controls (not native acceptance)

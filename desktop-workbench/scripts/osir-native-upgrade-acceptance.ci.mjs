@@ -7,21 +7,29 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HARNESS_FILES, acceptanceMatrix, reviewedBindings, verifyHarness, verifyHarnessFiles } from './osir-artifact-acceptance-ci.mjs';
 import { bindInputs } from './osir-native-smoke.mjs';
-import { bindBaseline, FINAL_VERSION, validateSpec } from './osir-native-upgrade-acceptance.mjs';
+import { bindBaseline, FINAL_VERSION, FINAL_REVISION, validateSpec } from './osir-native-upgrade-acceptance.mjs';
 import { SHA, bytes, check, digest, fingerprint, immutableFile, inspect, json, matches, within } from './osir-anywhere-release-common.mjs';
 
 export const TOOL_VERSIONS = { 'electron-builder': '26.18.1', '@electron/asar': '3.4.1', typescript: '6.0.3' };
 export const UPGRADE_PRODUCT = Object.freeze({
-  sourceCommit: 'c11619cca3c68e705877024a8687f27be9d65a3a',
-  sourceSha256: '5712a25a90d626219812500fa6c0b247a560cea5d77a78fb603f219b5911115e',
-  recipeSha256: 'ed0c42acc6f5e663c3e35a13b35a1e21e4f6b5b2dd20089646f99869be338d87',
+  sourceCommit: '27b001b80ee3df91f37e3cb9ea70fe007f530b33',
+  sourceSha256: '5f5d727080f81d01e1749df028daa3cfcb8c4a1eb126be9d3999745861ce6b9a',
+  recipeSha256: '258b01591b9d82cfdfae5b0dcb4a22a01fd4e65502fd7c042d5bed69b2d56bb7',
   version: FINAL_VERSION,
 });
 export function verifyUpgradeProduct(bindings) {
   for (const [key, value] of Object.entries(UPGRADE_PRODUCT)) check(bindings[key] === value, `Upgrade bindings differ from frozen 2.2.1 product: ${key}`);
   return bindings;
 }
-export const DISCOVERY_TEST_MODULES = ['desktop-updates', 'json-store', 'update-version', 'update-download', 'release-manifest'];
+// Keep smoke's strict bindings schema unchanged; revision is sealed by the
+// pinned recipe and the original receipt, then read again from installed ASAR.
+export function verifyUpgradeReceipt(receipt) {
+  const plan = receipt?.plan;
+  check(plan?.releaseRevision === FINAL_REVISION && plan.releaseId === 'osir-anywhere-2.2.1-20261115-r1', 'Upgrade receipt must identify frozen revision 1');
+  for (const [key, value] of Object.entries(UPGRADE_PRODUCT)) check(plan[key === 'sourceCommit' ? 'checkoutHead' : key] === value, `Upgrade receipt frozen identity mismatch: ${key}`);
+  return receipt;
+}
+export const DISCOVERY_TEST_MODULES = ['desktop-updates', 'json-store', 'update-version', 'update-download', 'release-manifest', 'release-build-info'];
 export const UPGRADE_FILES = [
   '.github/workflows/osir-anywhere-upgrade-acceptance.yml',
   ...['mjs', 'runtime.mjs', 'extract.mjs', 'test.mjs', 'ci.mjs', 'ci.test.mjs', 'md'].map(suffix => `desktop-workbench/scripts/osir-native-upgrade-acceptance.${suffix}`),
@@ -176,7 +184,8 @@ async function main() {
   if (mode === 'verify') return;
   if (mode === 'link-tools') return linkTools(checkout, join(env.RUNNER_TEMP, 'osir-upgrade-tools'));
   const base = await json(join(root, 'base-spec.json'));
-  check(base.runner.nativeMachine === machine, 'Base spec machine mismatch'); await bindInputs(base);
+  check(base.runner.nativeMachine === machine, 'Base spec machine mismatch');
+  verifyUpgradeReceipt((await bindInputs(base)).receipt);
   if (mode === 'prepare-spec') {
     const spec = await prepareSpec(base, resolve(checkout, '../frozen-source'), join(root, 'original'));
     await immutableFile(join(root, 'prepare-upgrade-spec.json'), bytes(spec)); return;

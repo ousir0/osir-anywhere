@@ -402,10 +402,11 @@ async function fixture(t) {
 
 function discoveryFixture() {
   return { kind: 'packaged-native-service-integration', syntheticManifest: true, temporaryTestKey: true, serverVersionUnchanged: true,
-    actualVersions: { desktop: '2.2.1', manifestBaseline: '2.2.1', manifestPatch: '2.2.2', serverBefore: '2.2.0', serverAfter: '2.2.0' },
-    baseline: { available: false }, patch: { available: true, latestVersion: '2.2.2', error: null }, invalidSignature: { error: 'checkFailed' },
+    actualVersions: { desktop: '2.2.1', manifestBaseline: '2.2.1', manifestRevisionUpgrade: '2.2.1', manifestPatch: '2.2.2', serverBefore: '2.2.0', serverAfter: '2.2.0' },
+    actualRevisions: { desktop: 1, manifestBaseline: 1, manifestRevisionUpgrade: 2, manifestRollback: 0, manifestPatch: 0 },
+    baseline: { available: false, release: { revision: 1 } }, revisionUpgrade: { available: true, latestVersion: '2.2.1', release: { revision: 2 }, error: null, dialogOpen: true, artifact: { arch: 'universal' } }, rollback: { available: false, release: { revision: 0 }, error: null }, patch: { available: true, latestVersion: '2.2.2', error: null }, invalidSignature: { error: 'checkFailed' },
     packageVersion: '2.2.1', packaged: true, electron: '39.2.7', serviceSha256: 'a'.repeat(64), servicePath: '/synthetic/app.asar/dist/electron/desktop-updates.js',
-    requests: ['control-health', 'manifest', 'manifest', 'health', 'manifest', 'control-health'].map(kind => ({ kind, version: kind.endsWith('health') ? '2.2.0' : '2.2.1', method: 'GET', transport: 'synthetic-fetcher' })), installerCalls: 0 };
+    requests: ['control-health', 'manifest', 'manifest', 'health', 'manifest', 'manifest', 'health', 'manifest', 'control-health'].map(kind => ({ kind, version: kind.endsWith('health') ? '2.2.0' : '2.2.1', method: 'GET', transport: 'synthetic-fetcher' })), installerCalls: 0 };
 }
 
 test('CLI requires known modes, absolute fresh paths and no hidden isolation bypass flags', () => {
@@ -594,11 +595,14 @@ test('serialized probe exercises the real DesktopUpdateService source in synthet
     vm.runInNewContext('(function(require,module,exports){' + compiled + '\n})', { Buffer, URL, AbortController, TextDecoder, Response, setTimeout, clearTimeout, process }, { filename: file })(load, module, module.exports);
     return module.exports;
   };
-  const resourceRoot = process.platform === 'win32' ? 'C:\\controlled\\Resources' : '/controlled/Resources';
+  const resourceRoot = join(f.root, 'Resources'), appRoot = join(resourceRoot, 'app.asar'), buildInfo = join(appRoot, 'dist/build-info.json');
+  await mkdir(join(appRoot, 'dist'), { recursive: true });
+  await writeFile(buildInfo, JSON.stringify({ productId: 'osir-anywhere', desktopVersion: '2.2.1', revision: 1, serverVersion: '2.2.0' }));
   const service = load('./desktop-updates'), servicePath = join(resourceRoot, 'app.asar/dist/electron/desktop-updates.js');
   const probeRequire = name => {
-    if (name === 'electron') return { app: { isPackaged: true, getVersion: () => '2.2.1', getPath: () => f.root } };
+    if (name === 'electron') return { app: { isPackaged: true, getVersion: () => '2.2.1', getAppPath: () => appRoot, getPath: () => f.root } };
     if (name === servicePath) return service;
+    if (name === './dist/electron/release-build-info.js') return load('./release-build-info');
     if (name === './dist/electron/release-manifest.js') return load('./release-manifest');
     if (name === './package.json') return { version: '2.2.1' };
     if (name === 'node:fs') return { ...require(name), readFileSync: (file, ...args) => file === servicePath ? Buffer.from('synthetic-packaged-service-bytes') : require(name).readFileSync(file, ...args) };
@@ -607,15 +611,23 @@ test('serialized probe exercises the real DesktopUpdateService source in synthet
   probeRequire.resolve = name => { assert.equal(name, './dist/electron/desktop-updates.js'); return servicePath; };
   const runtimeProcess = { resourcesPath: resourceRoot, platform: process.platform === 'win32' ? 'win32' : 'darwin', arch: process.arch, versions: { electron: '39.2.7' }, getBuiltinModule: () => ({ createRequire: () => probeRequire }) };
   const result = await vm.runInNewContext(`(${packagedDiscoveryProbe.toString()})()`, { process: runtimeProcess, Response, Buffer });
-  assert.deepEqual(Array.from(result.requests, request => `${request.kind}:${request.method}`), ['control-health:GET', 'manifest:GET', 'manifest:GET', 'health:GET', 'manifest:GET', 'control-health:GET']);
+  assert.deepEqual(Array.from(result.requests, request => `${request.kind}:${request.method}`), ['control-health:GET', 'manifest:GET', 'manifest:GET', 'health:GET', 'manifest:GET', 'manifest:GET', 'health:GET', 'manifest:GET', 'control-health:GET']);
   validateDiscovery(JSON.parse(JSON.stringify(result)));
   assert.equal(result.privateKeyPersisted, false); assert.equal(result.installerCalls, 0);
   for (const [i, envelope] of result.envelopes.entries()) {
-    assert.equal(verify('RSA-SHA256', Buffer.from(envelope.payload, 'base64'), result.publicKeyPem, Buffer.from(envelope.signature, 'base64')), i < 2);
+    assert.equal(verify('RSA-SHA256', Buffer.from(envelope.payload, 'base64'), result.publicKeyPem, Buffer.from(envelope.signature, 'base64')), i < 4);
     assert.equal(JSON.parse(Buffer.from(envelope.payload, 'base64')).minimumServerVersion, '2.2.0');
   }
+  assert.deepEqual(Array.from(result.envelopes, envelope => JSON.parse(Buffer.from(envelope.payload, 'base64')).revision), [1, 2, 0, 0, 0]);
+  assert.equal(result.revisionUpgrade.available, true); assert.equal(result.revisionUpgrade.dialogOpen, true); assert.equal(result.rollback.available, false);
+  for (const patch of [{ revision: 0 }, { revision: 2 }, { desktopVersion: '2.2.0' }, { unexpected: true }]) {
+    await writeFile(buildInfo, JSON.stringify({ productId: 'osir-anywhere', desktopVersion: '2.2.1', revision: 1, serverVersion: '2.2.0', ...patch }));
+    await assert.rejects(vm.runInNewContext(`(${packagedDiscoveryProbe.toString()})()`, { process: runtimeProcess, Response, Buffer }), /revision 1|build information is invalid/);
+  }
+  await rm(buildInfo);
+  await assert.rejects(vm.runInNewContext(`(${packagedDiscoveryProbe.toString()})()`, { process: runtimeProcess, Response, Buffer }), /revision 1/);
   assert.ok(result.requests.every(request => request.method === 'GET'));
-  assert.equal(result.requests.filter(request => request.kind === 'health').length, 1);
+  assert.equal(result.requests.filter(request => request.kind === 'health').length, 2);
   assert.equal(Object.keys(result).some(key => /privatekey/i.test(key) && key !== 'privateKeyPersisted'), false);
   assert.equal(SEED_SETTINGS.startConnectorOnLaunch, false);
 });
@@ -632,4 +644,17 @@ test('account-free Mac fixture isolates ad-hoc keychain prompts without claiming
   assert.deepEqual(win.args, ['--inspect=127.0.0.1:0']);
   assert.equal(win.secretStore, 'native-windows');
   assert.throws(() => syntheticUpgradeLaunch('linux'), /Unsupported/);
+});
+
+test('same public revision discovery rejects missing, stale, non-offered and fabricated revision observations', () => {
+  for (const patch of [{ revisionUpgrade: undefined }, { revisionUpgrade: { ...discoveryFixture().revisionUpgrade, available: false } },
+    { revisionUpgrade: { ...discoveryFixture().revisionUpgrade, latestVersion: '2.2.2' } },
+    { revisionUpgrade: { ...discoveryFixture().revisionUpgrade, release: { revision: 1 } } },
+    { revisionUpgrade: { ...discoveryFixture().revisionUpgrade, dialogOpen: false } },
+    { revisionUpgrade: { ...discoveryFixture().revisionUpgrade, artifact: null } },
+    { rollback: { ...discoveryFixture().rollback, available: true } },
+    { actualRevisions: undefined }, { actualRevisions: { ...discoveryFixture().actualRevisions, desktop: 0 } },
+    { actualRevisions: { ...discoveryFixture().actualRevisions, manifestRevisionUpgrade: 1 } }]) {
+    assert.throws(() => validateDiscovery({ ...discoveryFixture(), ...patch }));
+  }
 });

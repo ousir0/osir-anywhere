@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DISCOVERY_TEST_MODULES, TOOL_VERSIONS, UPGRADE_PRODUCT, discoveryTestSources, linkTools, prepareSpec, verifyUpgradeProduct } from './osir-native-upgrade-acceptance.ci.mjs';
+import { DISCOVERY_TEST_MODULES, TOOL_VERSIONS, UPGRADE_PRODUCT, discoveryTestSources, linkTools, prepareSpec, verifyUpgradeProduct, verifyUpgradeReceipt } from './osir-native-upgrade-acceptance.ci.mjs';
 import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 
 test('upgrade plan binds frozen 2.2.1 source/recipe/version while archive/run/lock remain reviewed inputs', () => {
@@ -79,4 +79,15 @@ test('sparse frozen discovery inputs require the reviewed commit, inventory and 
   await assert.rejects(discoveryTestSources(f.checkout, { ...bindings, sourceSha256: '0'.repeat(64) }), /inventory/);
   await writeFile(join(electron, 'desktop-updates.ts'), '// changed source');
   await assert.rejects(discoveryTestSources(f.checkout, bindings), /source changed/);
+});
+
+test('upgrade receipt requires the exact revision 1 release and frozen product identity', () => {
+  const { sourceCommit, ...product } = UPGRADE_PRODUCT;
+  const receipt = { plan: { ...product, checkoutHead: sourceCommit, releaseRevision: 1, releaseId: 'osir-anywhere-2.2.1-20261115-r1' } };
+  assert.equal(verifyUpgradeReceipt(receipt), receipt);
+  for (const patch of [{ releaseRevision: undefined }, { releaseRevision: 0 }, { releaseRevision: 2 }, { releaseRevision: '1' }, { releaseId: 'legacy' },
+    ...Object.keys(receipt.plan).map(key => ({ [key]: 'different' }))]) {
+    assert.throws(() => verifyUpgradeReceipt({ plan: { ...receipt.plan, ...patch } }));
+  }
+  assert.throws(() => verifyUpgradeReceipt({}));
 });

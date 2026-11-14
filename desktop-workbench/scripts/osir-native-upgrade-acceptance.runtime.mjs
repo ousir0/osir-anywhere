@@ -419,9 +419,12 @@ export async function packagedDiscoveryProbe() {
   const servicePath = require.resolve('./dist/electron/desktop-updates.js');
   if (!app.isPackaged || app.getVersion() !== '2.2.1' || servicePath !== path.join(process.resourcesPath, 'app.asar/dist/electron/desktop-updates.js')) throw new Error('Expected final packaged native service');
   const { DesktopUpdateService } = require(servicePath), { RELEASE_MANIFEST_URL } = require('./dist/electron/release-manifest.js');
+  const { readPackagedRevision } = require('./dist/electron/release-build-info.js');
+  const installedRevision = readPackagedRevision(app.getAppPath(), app.getVersion());
+  if (installedRevision !== 1) throw new Error('Expected final packaged revision 1');
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
-  const requests = [], stages = [], envelopes = []; let installerCalls = 0, version = '2.2.1', invalid = false, healthControl = 'before';
+  const requests = [], stages = [], envelopes = []; let installerCalls = 0, version = '2.2.1', revision = installedRevision, invalid = false, healthControl = 'before';
   const server = { serverUrl: 'http://127.0.0.1:47139', apiNamespace: '/api/v2', oauthWebOrigin: 'http://127.0.0.1:47139' };
   const directory = fs.mkdtempSync(path.join(app.getPath('userData'), 'native-patch-discovery-'));
   const fetcher = async (input, init) => {
@@ -429,13 +432,13 @@ export async function packagedDiscoveryProbe() {
     if (url === RELEASE_MANIFEST_URL) {
       const extension = process.platform === 'darwin' ? 'dmg' : 'exe', arch = process.platform === 'darwin' ? 'universal' : process.arch;
       const filename = `synthetic-desktop-${version}-${arch}.${extension}`;
-      const payload = Buffer.from(JSON.stringify({ schemaVersion: 1, productId: 'osir-anywhere', channel: 'stable', releaseId: 'native-acceptance', version,
+      const payload = Buffer.from(JSON.stringify({ schemaVersion: 1, productId: 'osir-anywhere', channel: 'stable', releaseId: 'native-acceptance', version, revision,
         publishedAt: '2026-11-14T00:00:00Z', minimumServerVersion: '2.2.0', artifacts: [{ platform: process.platform, arch, filename,
           url: `https://osirvedio.cn-nb1.rains3.com/osir-anywhere/releases/native-acceptance/${filename}`, size: 1,
           sha256: createHash('sha256').update('x').digest('hex'), systemSignature: 'unsigned' }] }));
       const signature = sign('RSA-SHA256', payload, privateKey); if (invalid) signature[0] ^= 1;
       const envelope = { payload: payload.toString('base64'), signature: signature.toString('base64') };
-      envelopes.push(envelope); requests.push({ kind: 'manifest', url, method, version, transport: 'synthetic-fetcher', invalidSignature: invalid });
+      envelopes.push(envelope); requests.push({ kind: 'manifest', url, method, version, revision, transport: 'synthetic-fetcher', invalidSignature: invalid });
       return Response.json(envelope);
     }
     if (url === server.serverUrl + '/api/v2/health') {
@@ -444,21 +447,24 @@ export async function packagedDiscoveryProbe() {
     }
     throw new Error('Unexpected request; no network fallback');
   };
-  const service = new DesktopUpdateService({ directory, currentVersion: app.getVersion(), manifestUrl: RELEASE_MANIFEST_URL, publicKeyPem,
+  const service = new DesktopUpdateService({ directory, currentVersion: app.getVersion(), currentRevision: installedRevision, manifestUrl: RELEASE_MANIFEST_URL, publicKeyPem,
     platform: process.platform, arch: process.arch, fetcher, onState: state => stages.push(state),
     prepareInstaller: async () => { installerCalls++; throw new Error('Downloads are forbidden in discovery'); },
     openInstaller: async () => { installerCalls++; throw new Error('Installer opening is forbidden in discovery'); } });
   try {
     const serverBefore = await (await fetcher(server.serverUrl + '/api/v2/health')).json(); healthControl = null;
-    const baseline = await service.check(server); version = '2.2.2';
+    const baseline = await service.check(server); revision = 2;
+    const revisionUpgrade = await service.check(server); revision = 0;
+    const rollback = await service.check(server); version = '2.2.2';
     const patch = await service.check(server); invalid = true;
     const invalidSignature = await service.check(server);
     healthControl = 'after'; const serverAfter = await (await fetcher(server.serverUrl + '/api/v2/health')).json();
     return { kind: 'packaged-native-service-integration', syntheticManifest: true, temporaryTestKey: true,
       serverVersionUnchanged: serverBefore.version === serverAfter.version,
-      actualVersions: { desktop: app.getVersion(), manifestBaseline: baseline.latestVersion, manifestPatch: patch.latestVersion, serverBefore: serverBefore.version, serverAfter: serverAfter.version },
+      actualVersions: { desktop: app.getVersion(), manifestBaseline: baseline.latestVersion, manifestRevisionUpgrade: revisionUpgrade.latestVersion, manifestPatch: patch.latestVersion, serverBefore: serverBefore.version, serverAfter: serverAfter.version },
+      actualRevisions: { desktop: installedRevision, manifestBaseline: baseline.release?.revision, manifestRevisionUpgrade: revisionUpgrade.release?.revision, manifestRollback: rollback.release?.revision, manifestPatch: patch.release?.revision },
       packageVersion: require('./package.json').version, packaged: app.isPackaged, electron: process.versions.electron,
       servicePath, serviceSha256: createHash('sha256').update(fs.readFileSync(servicePath)).digest('hex'),
-      baseline, patch, invalidSignature, requests, states: stages, installerCalls, publicKeyPem, envelopes, privateKeyPersisted: false };
+      baseline, revisionUpgrade, rollback, patch, invalidSignature, requests, states: stages, installerCalls, publicKeyPem, envelopes, privateKeyPersisted: false };
   } finally { service.dispose(); }
 }

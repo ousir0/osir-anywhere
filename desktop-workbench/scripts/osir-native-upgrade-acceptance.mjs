@@ -16,6 +16,8 @@ import { SHA, bytes, check, digest, fingerprint, json, separate, within } from '
 
 export const BASELINE_VERSION = '2.2.0';
 export const FINAL_VERSION = '2.2.1';
+export const FINAL_REVISION = 1;
+export const NEXT_REVISION = 2;
 export const PATCH_VERSION = '2.2.2';
 // Server compatibility is independent of the Desktop release being tested.
 export const SERVER_VERSION = '2.2.0';
@@ -353,11 +355,13 @@ export async function runAcceptance(spec, output, { adapterFactory, isolationVer
 
 export function validateDiscovery(value) {
   check(value?.kind === 'packaged-native-service-integration' && value.syntheticManifest === true && value.temporaryTestKey === true && value.serverVersionUnchanged === true, 'Discovery scope/key/feed mismatch');
-  check(fingerprint(value.actualVersions) === fingerprint({ desktop: FINAL_VERSION, manifestBaseline: FINAL_VERSION, manifestPatch: PATCH_VERSION, serverBefore: SERVER_VERSION, serverAfter: SERVER_VERSION }), 'Discovery version observations mismatch');
+  check(fingerprint(value.actualVersions) === fingerprint({ desktop: FINAL_VERSION, manifestBaseline: FINAL_VERSION, manifestRevisionUpgrade: FINAL_VERSION, manifestPatch: PATCH_VERSION, serverBefore: SERVER_VERSION, serverAfter: SERVER_VERSION }), 'Discovery version observations mismatch');
+  check(fingerprint(value.actualRevisions) === fingerprint({ desktop: FINAL_REVISION, manifestBaseline: FINAL_REVISION, manifestRevisionUpgrade: NEXT_REVISION, manifestRollback: 0, manifestPatch: 0 }), 'Discovery revision observations mismatch');
+  check(value.baseline?.release?.revision === FINAL_REVISION && value.revisionUpgrade?.available === true && value.revisionUpgrade.latestVersion === FINAL_VERSION && value.revisionUpgrade.release?.revision === NEXT_REVISION && value.revisionUpgrade.error === null && value.revisionUpgrade.dialogOpen === true && value.revisionUpgrade.artifact && value.rollback?.available === false && value.rollback.release?.revision === 0 && value.rollback.error === null, 'Same public version revision discovery / rollback controls failed');
   check(value.baseline?.available === false && value.patch?.available === true && value.patch.latestVersion === PATCH_VERSION && value.patch.error === null && value.invalidSignature?.error === 'checkFailed', 'Desktop PATCH / negative signature controls failed');
   check(value.packageVersion === FINAL_VERSION && value.packaged === true && typeof value.electron === 'string' && SHA.test(value.serviceSha256) && /app\.asar[\\/]dist[\\/]electron[\\/]desktop-updates\.js$/.test(value.servicePath), 'Discovery did not execute the final ASAR service');
-  check(Array.isArray(value.requests) && value.requests.length === 6 && value.requests.every(r => r.transport === 'synthetic-fetcher' && r.method === 'GET'), 'Discovery request evidence incomplete');
-  check(value.requests.map(r => r.kind).join(',') === 'control-health,manifest,manifest,health,manifest,control-health' && value.requests.filter(r => r.kind.endsWith('health')).every(r => r.version === SERVER_VERSION) && value.installerCalls === 0, 'Discovery used an unexpected request/installer path');
+  check(Array.isArray(value.requests) && value.requests.length === 9 && value.requests.every(r => r.transport === 'synthetic-fetcher' && r.method === 'GET'), 'Discovery request evidence incomplete');
+  check(value.requests.map(r => r.kind).join(',') === 'control-health,manifest,manifest,health,manifest,manifest,health,manifest,control-health' && value.requests.filter(r => r.kind.endsWith('health')).every(r => r.version === SERVER_VERSION) && value.installerCalls === 0, 'Discovery used an unexpected request/installer path');
   return value;
 }
 
@@ -377,7 +381,7 @@ export function parseArguments(args) {
 
 async function main() {
   if (process.argv.slice(2).join(' ') === '--help') {
-    console.log('prepare-baseline --spec ABS --output NEW_ABS\nrun --spec ABS --output NEW_ABS\nRemote GitHub-hosted clean native GUI CI only. prepare reuses frozen compiled outputs or extracts them from final Desktop 2.2.1, then packages test-only 2.2.0 (not the published historical release). run installs baseline and original final bytes; discovery tests Desktop 2.2.1 -> 2.2.2 with Server fixed at 2.2.0. Network policy: unrestricted-no-product-credentials; public network may be reachable, never an offline claim. No production source writes or publish. See osir-native-upgrade-acceptance.md.'); return;
+    console.log('prepare-baseline --spec ABS --output NEW_ABS\nrun --spec ABS --output NEW_ABS\nRemote GitHub-hosted clean native GUI CI only. prepare reuses frozen compiled outputs or extracts them from final Desktop 2.2.1, then packages test-only 2.2.0 (not the published historical release). run installs baseline and original final bytes; discovery tests Desktop 2.2.1 revision 1 -> revision 2 and 2.2.2 with Server fixed at 2.2.0. Network policy: unrestricted-no-product-credentials; public network may be reachable, never an offline claim. No production source writes or publish. See osir-native-upgrade-acceptance.md.'); return;
   }
   const options = parseArguments(process.argv.slice(2)), spec = await json(options.spec);
   let result;
