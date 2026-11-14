@@ -13,7 +13,7 @@ import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 import { fileIdentity, fingerprintTree } from './osir-native-smoke.mjs';
 import { validateNativeReport } from './osir-native-acceptance-aggregate.mjs';
 import { BASELINE_VERSION, bindBaseline, copyIndependent, derivativeInventory, evidenceWriter, observeUpgradeHardware, PACKAGE_PATH, parseArguments, prepareBaseline, runAcceptance, validateDiscovery, validateSpec, versionOnlyDerivative } from './osir-native-upgrade-acceptance.mjs';
-import { observeUpgradeGui, ownedExit, packagedDiscoveryProbe, packagedWindowState, requestUpgradeQuit, SEED_SETTINGS, UpgradeAdapter, waitForUpgradeWelcome, waitForUpgradeWindow } from './osir-native-upgrade-acceptance.runtime.mjs';
+import { observeUpgradeGui, ownedExit, packagedDiscoveryProbe, packagedWindowState, requestUpgradeQuit, SEED_SETTINGS, syntheticUpgradeLaunch, UpgradeAdapter, waitForUpgradeWelcome, waitForUpgradeWindow } from './osir-native-upgrade-acceptance.runtime.mjs';
 import { electronFromLock, reuseExtractedRuntime, validateElectronFramework } from './osir-native-upgrade-acceptance.extract.mjs';
 import { collectRaw, discoveryTestSources, runSpec as transferredRunSpec, sealBaseline } from './osir-native-upgrade-acceptance.ci.mjs';
 import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
@@ -494,4 +494,18 @@ test('serialized probe exercises the real DesktopUpdateService source in synthet
   assert.equal(result.requests.filter(request => request.kind === 'health').length, 1);
   assert.equal(Object.keys(result).some(key => /privatekey/i.test(key) && key !== 'privateKeyPersisted'), false);
   assert.equal(SEED_SETTINGS.startConnectorOnLaunch, false);
+});
+
+
+test('account-free Mac fixture isolates ad-hoc keychain prompts without claiming credential migration', () => {
+  const mac = syntheticUpgradeLaunch('darwin');
+  assert.deepEqual(mac.args, ['--inspect=127.0.0.1:0', '--use-mock-keychain']);
+  assert.equal(mac.secretStore, 'chromium-mock-keychain-synthetic-only');
+  assert.equal(mac.credentialMigrationCovered, false);
+  assert.equal(mac.realAccounts, false); assert.equal(mac.realOAuth, false);
+  assert.equal(mac.keychainPromptRootCauseProven, false);
+  const win = syntheticUpgradeLaunch('win32');
+  assert.deepEqual(win.args, ['--inspect=127.0.0.1:0']);
+  assert.equal(win.secretStore, 'native-windows');
+  assert.throws(() => syntheticUpgradeLaunch('linux'), /Unsupported/);
 });

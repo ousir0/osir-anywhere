@@ -265,3 +265,10 @@ run 只需原最终包、其 receipt/signature 和完整 baseline 证据；不�
 ## 仍须 CI 真跑验证
 
 当前实现尚未执行原生 baseline 重封装或安装/窗口/保留/发现流程。尤其需验证 Universal 重封装及 valid ad-hoc、Windows NSIS 同产品覆盖行为、实际 GUI inspector 可用性和 renderer origin 持久化。失败应交 raw 诊断，不能以此处单元测试替代正式原包验收。
+
+
+### macOS unattended synthetic keychain boundary (2026-11-14)
+
+The version-only baseline is ad-hoc re-signed; the original final App has a different signature. The account-free native installer/data fixture now launches both using Chromium `--use-mock-keychain` to avoid interactive secret-store prompts on unattended CI. This tests the original executable, renderer, preferences/files/localStorage, clean exit and independent patch discovery. It does **not** test real keychain access or encrypted credential migration, and no such result may be claimed. Normal final candidate/UI/SSO acceptance must run without this flag. Prior inspector timeouts are retained; a keychain prompt is a supported hypothesis, not a proven root cause. On a subsequent macOS session failure a bounded stack sample of only the exact spawned PID is preserved before cleanup.
+
+Primary references inspected: Electron safeStorage documentation (macOS synchronous calls can block for user input; inconsistent signing can prompt on updates), and Chromium mac_build_instructions section “Avoiding system permissions dialogs after each build” (mock-keychain flag changes subsystem behavior).

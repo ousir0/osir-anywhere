@@ -23,6 +23,7 @@ export const BOUNDARIES = [
   'Controlled version-only derivative tests installer cross-version data protection; it is not a published 2.1.0 release or historical schema migration.',
   'Discovery executes the final packaged DesktopUpdateService with a constructor-injected synthetic RSA feed and unchanged synthetic Server; it does not certify production feed/key/network or renderer update UI.',
   'No real accounts, models, OAuth, interactive installation confirmation or bypass of OS protections is tested.',
+  'macOS account-free cross-version fixture uses Chromium mock keychain for the ad-hoc baseline/final pair; real secret-store permissions and encrypted credential migration are not covered. Final production UI/SSO acceptance launches without this argument.',
 ];
 
 // Reuse the shared native probe verbatim. A Windows timeout remains failed

@@ -200,6 +200,17 @@ export async function ownedExit(child, inspector, graceful, env, { windowId, obs
   check(!graceful || (request?.requested === true && !quitError && clean && !forced), 'Owned Electron did not exit cleanly; data durability unproven');
 }
 
+// Account-free installer/data fixture only. A version-only baseline is re-signed
+// ad-hoc; Chromium may otherwise block the unattended GUI on a keychain prompt.
+// Production candidate/UI/SSO launches do not use these arguments.
+export function syntheticUpgradeLaunch(platform = process.platform) {
+  check(['darwin', 'win32'].includes(platform), 'Unsupported synthetic upgrade platform');
+  return { args: ['--inspect=127.0.0.1:0', ...(platform === 'darwin' ? ['--use-mock-keychain'] : [])],
+    secretStore: platform === 'darwin' ? 'chromium-mock-keychain-synthetic-only' : 'native-windows',
+    credentialMigrationCovered: false, realAccounts: false, realOAuth: false,
+    keychainPromptRootCauseProven: false };
+}
+
 export class UpgradeAdapter extends NativeAdapter {
   async hardware() {
     const machine = await observeUpgradeHardware(this);
@@ -268,7 +279,9 @@ export class UpgradeAdapter extends NativeAdapter {
     await this.evidence(`${label}-installed.json`, bytes(installed)); return installed;
   }
   async session(installed, label, action) {
-    const child = spawn(installed.executable, ['--inspect=127.0.0.1:0'], { cwd: this.work, env: this.env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const fixture = syntheticUpgradeLaunch();
+    await this.evidence(`${label}-launch-fixture.json`, bytes(fixture));
+    const child = spawn(installed.executable, fixture.args, { cwd: this.work, env: this.env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let log = '', url, error, inspector, window, completed = false;
     child.on('error', value => { error = value; });
     for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => {
@@ -288,6 +301,14 @@ export class UpgradeAdapter extends NativeAdapter {
       const image = Buffer.from(png, 'base64'); check(image.length > 100 && image.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])), 'Native window screenshot missing');
       await this.evidence(`${label}-window.png`, image); await this.evidence(`${label}-window.json`, bytes(state));
       const result = await action(inspector, state, window); completed = true; return result;
+    } catch (failure) {
+      // Preserve a native stack sample before owned-only cleanup. No timeout
+      // is promoted to readiness; these diagnostics cannot satisfy any gate.
+      if (process.platform === 'darwin' && child.exitCode === null && child.signalCode === null) {
+        try { await this.run('/usr/bin/sample', [String(child.pid), '2', '1'], `${label}-failed-native-stack`, { timeout: 10000 }); }
+        catch (error) { await this.evidence(`${label}-stack-diagnostic-failure.json`, bytes({ failure: String(error.message) })); }
+      }
+      throw failure;
     } finally {
       try { await ownedExit(child, inspector, completed, this.env, { windowId: window?.id, observe: result => this.evidence(`${label}-exit.json`, bytes(result)) }); }
       finally { await this.evidence(`${label}-startup.log`, log || String(error?.message ?? 'No output')); }
