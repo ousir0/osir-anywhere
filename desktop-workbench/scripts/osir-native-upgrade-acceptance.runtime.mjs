@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { mkdir, open, readdir, realpath, rename } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, realpath, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { asarJson, assertNativeMachine, binaryArchitectures, command, fileIdentity, NativeAdapter, smokeEnvironment, validateWindow, validateWindowsMetadata, validateWelcome } from './osir-native-smoke.mjs';
@@ -76,9 +76,10 @@ class Inspector {
     }); return new Inspector(socket);
   }
   async evaluate(expression) {
+    const label = expression.includes('packagedWindowState') ? 'window-state' : expression.includes('querySelector') ? 'renderer-welcome' : expression.includes('capturePage') ? 'screenshot' : expression.includes('ownership.quit') ? 'graceful-quit' : 'packaged-action';
     const id = ++this.id;
     const result = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Inspector evaluation timed out')); }, 20000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Inspector evaluation timed out: ' + label)); }, 20000);
       this.pending.set(id, { resolve, reject, timer });
       this.socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
     });
@@ -100,6 +101,7 @@ export const SEED_SETTINGS = { openAtLogin: false, startConnectorOnLaunch: false
 // loader. Serialize the probe into the real packaged process; do not retry
 // arbitrary evaluation exceptions or substitute a harness Electron module.
 export function packagedWindowState() {
+  if (typeof process === 'undefined' || !process.versions) return { ready: false, reason: 'node-process-not-ready', phase: { processType: null, electron: null } };
   const phase = { processType: process.type ?? null, electron: process.versions.electron ?? null };
   if (process.type !== 'browser' || !process.versions.electron) return { ready: false, reason: 'electron-browser-not-ready', phase };
   const require = process.getBuiltinModule('module').createRequire(process.resourcesPath + '/app.asar/package.json');
@@ -127,7 +129,7 @@ export async function waitForUpgradeWindow(inspector, context, deadline, observe
       if (observation?.ready === true) {
         state = observation.state;
         try { return { state, window: validateWindow(state, context) }; } catch { /* A window may still be loading. */ }
-      } else check(observation?.ready === false && ['electron-browser-not-ready', 'electron-module-not-ready', 'electron-app-not-ready'].includes(observation.reason), 'Invalid packaged startup observation');
+      } else check(observation?.ready === false && ['node-process-not-ready', 'electron-browser-not-ready', 'electron-module-not-ready', 'electron-app-not-ready'].includes(observation.reason), 'Invalid packaged startup observation');
       await pause(250);
     }
     if (state) validateWindow(state, context);
@@ -153,7 +155,7 @@ export async function waitForUpgradeWelcome(inspector, windowId, deadline, obser
   let welcome;
   try {
     while (Date.now() < deadline) {
-      welcome = await inspector.evaluate(`(async()=>{const w=${ELECTRON}.BrowserWindow.fromId(${windowId});return w.webContents.executeJavaScript(${JSON.stringify("(() => { const h=document.querySelector('h1'); const b=document.querySelector('button'); const r=b?.getBoundingClientRect(); const s=b&&getComputedStyle(b); return {ready:document.readyState==='complete',branded:!!h?.textContent?.includes('OSIR Anywhere'),action:b?{text:b.textContent?.trim(),enabled:!b.disabled,visible:!!r&&r.width>0&&r.height>0&&s.display!=='none'&&s.visibility==='visible'}:null}; })()")});})()`);
+      welcome = await inspector.evaluate(`(async()=>{const w=${ELECTRON}.BrowserWindow.fromId(${windowId});if(w.webContents.isLoading())return {ready:false,branded:false,action:null,phase:'navigation-loading'};return Promise.race([w.webContents.executeJavaScript(${JSON.stringify("(() => { const h=document.querySelector('h1'); const b=document.querySelector('button'); const r=b?.getBoundingClientRect(); const s=b&&getComputedStyle(b); return {ready:document.readyState==='complete',branded:!!h?.textContent?.includes('OSIR Anywhere'),action:b?{text:b.textContent?.trim(),enabled:!b.disabled,visible:!!r&&r.width>0&&r.height>0&&s.display!=='none'&&s.visibility==='visible'}:null}; })()")}),new Promise(resolve=>setTimeout(()=>resolve({ready:false,branded:false,action:null,phase:"renderer-probe-timeout"}),3000))]);})()`);
       try { validateWelcome(welcome); return welcome; } catch { await pause(250); }
     }
     validateWelcome(welcome);
@@ -330,8 +332,14 @@ export async function createUpgradeAdapter(context) {
   // This authorized mode makes no offline/network isolation claim.
   delete env.UV_OFFLINE;
   for (const key of ['APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'TMPDIR', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'ZDOTDIR', 'AGENT_CONNECTOR_DATA_DIR', 'UV_CACHE_DIR']) await mkdir(env[key], { recursive: true, mode: 0o700 });
-  const appData = process.platform === 'win32' ? env.APPDATA : join(context.accountHome, 'Library/Application Support');
-  return new UpgradeAdapter({ ...context, work, env, expectedUserData: join(appData, PRODUCT), allowedDataRoots: [appData] });
+  // Chromium reads the Windows Known Folder even when APPDATA is overridden.
+  // This adapter is authorized only after the disposable hosted-runner gate.
+  // Keep one exact clean-account product directory, not an arbitrary fallback.
+  const appData = process.platform === 'win32' ? join(context.accountHome, 'AppData', 'Roaming') : join(context.accountHome, 'Library/Application Support');
+  const expectedUserData = join(appData, PRODUCT);
+  try { await lstat(expectedUserData); throw new Error('Disposable runner already has product data; refusing upgrade seed'); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  return new UpgradeAdapter({ ...context, work, env, expectedUserData, allowedDataRoots: [appData] });
 }
 
 /** Serialized into the real packaged Electron MAIN inspector, not Node mocks. */

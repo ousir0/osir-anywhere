@@ -21,6 +21,11 @@ import { reviewedBindings } from './osir-artifact-acceptance-ci.mjs';
 const originalPackage = Buffer.from('{\n  "name": "osir-anywhere-desktop-workbench",\n  "productName": "OSIR Anywhere",\n  "description": "测试不重写字节",\n  "version": "2.2.0"\n}\n');
 const identity = data => ({ size: data.length, sha256: digest(data) });
 
+test('real early inspector context without process remains a recorded bootstrap phase', () => {
+  const observation = JSON.parse(JSON.stringify(vm.runInNewContext('(' + packagedWindowState.toString() + ')()', {})));
+  assert.deepEqual(observation, { ready: false, reason: 'node-process-not-ready', phase: { processType: null, electron: null } });
+});
+
 test('packaged startup records browser bootstrap and exact missing-electron phases without hiding other exceptions', () => {
   let calls = 0, ready = false, moduleError = Object.assign(new Error("Cannot find module 'electron'\nRequire stack:\n- synthetic/app.asar/package.json"), { code: 'MODULE_NOT_FOUND' });
   const electron = { app: { isReady: () => ready, getName: () => 'OSIR Anywhere', getVersion: () => '2.1.0', isPackaged: true, getPath: () => '/synthetic' }, BrowserWindow: { getAllWindows: () => [] } };
@@ -182,6 +187,27 @@ test('upgrade waits past Loading for the shared welcome gate before allowing a s
   const inspector = { evaluate: async () => { assert.equal(screenshotAllowed, false); return ++calls === 1 ? { ready: true, branded: false, action: null } : ready; } };
   assert.deepEqual(await waitForUpgradeWelcome(inspector, 7, Date.now() + 2000, async value => { observed = value; }), ready);
   screenshotAllowed = true; assert.equal(calls, 2); assert.deepEqual(observed, ready);
+});
+
+test('serialized welcome probe bounds navigation suspension and still requires a real enabled welcome', async () => {
+  const ready = { ready: true, branded: true, action: { text: 'Sign in', enabled: true, visible: true } };
+  let calls = 0, executions = 0; const phases = [];
+  const inspector = { evaluate: async source => {
+    calls++;
+    const webContents = {
+      isLoading: () => calls === 1,
+      executeJavaScript: () => { executions++; return calls === 2 ? new Promise(() => {}) : Promise.resolve(ready); },
+    };
+    const observation = JSON.parse(JSON.stringify(await vm.runInNewContext(source, {
+      process: { resourcesPath: '/synthetic', getBuiltinModule: () => ({ createRequire: () => () => ({ BrowserWindow: { fromId: () => ({ webContents }) } }) }) },
+      setTimeout: fn => setTimeout(fn, 1),
+    })));
+    phases.push(observation); return observation;
+  } };
+  assert.deepEqual(await waitForUpgradeWelcome(inspector, 7, Date.now() + 2500), ready);
+  assert.equal(executions, 2); assert.equal(calls, 3);
+  assert.equal(phases[0].phase, 'navigation-loading');
+  assert.equal(phases[1].phase, 'renderer-probe-timeout');
 });
 
 test('a disabled welcome action times out and preserves the failed renderer observation', async () => {
