@@ -68,13 +68,25 @@ export async function bootstrapClientHandoff(options: Options): Promise<OsirRunt
     configureDSH: async () => ({ status: "ready" }),
   };
   const deadline = Date.now() + 45_000;
-  // Connector startup publishes its supported runtime types asynchronously.
-  // Poll only reads; never create duplicate instances while waiting for it.
+  // Connector startup can discover Codex before Client finishes publishing its
+  // binding. GET returns cached discovery; explicitly rediscover an unavailable
+  // Codex during this authorized handoff so the later grant can be observed.
+  // Discovery also reconciles saved active instances (including a stale pin).
+  // Never replay device/create, runtime creation or uncertain activation here.
+  let rediscoverCodex = false;
   for (;;) {
-    live(); const types = await api.getRuntimeTypes(binding.connectorId);
+    live(); const types: Awaited<ReturnType<OsirRuntimeBootstrapApi["getRuntimeTypes"]>> = rediscoverCodex
+      ? await request<Awaited<ReturnType<OsirRuntimeBootstrapApi["getRuntimeTypes"]>>>("/runtime-types/discover", "POST")
+      : await api.getRuntimeTypes(binding.connectorId);
     if (types.connectorId !== binding.connectorId || !Array.isArray(types.runtimeTypes)) throw new Error("Anywhere 实例响应无效。");
-    if (options.configuredToolTypes.every(tool => types.runtimeTypes.some(row => row.runtimeType === tool))) break;
-    if (Date.now() >= deadline) throw new Error("Anywhere 本机实例发现超时，请重新打开。");
+    const allPresent = options.configuredToolTypes.every(tool => types.runtimeTypes.some(row => row.connectorId === binding.connectorId && row.runtimeType === tool));
+    const codex = types.runtimeTypes.find(row => row.connectorId === binding.connectorId && row.runtimeType === "codex");
+    rediscoverCodex = options.configuredToolTypes.includes("codex") && !!codex && (!codex.present || !codex.available);
+    if (allPresent && !rediscoverCodex) break;
+    if (Date.now() >= deadline) {
+      if (allPresent) break; // Return the coordinator's fixed unavailable code.
+      throw new Error("Anywhere 本机实例发现超时，请重新打开。");
+    }
     await pause(750, undefined, { signal });
   }
   const results = await new OsirRuntimeBootstrap(api).run({ connId: binding.connectorId,

@@ -6,6 +6,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import type { OsirClientHandoffOptions } from "./osir-client-handoff";
 import type { DesktopSessionPayload } from "./desktop-session";
+import { clientHandoffFlowFromArgv, clientHandoffFlowFromSecondInstance, clientHandoffLockData } from "./osir-client-handoff-launch";
 
 // Exercise actual Main wiring, rather than a second implementation of its
 // callbacks. Electron/network/storage remain synthetic and no app is launched.
@@ -86,4 +87,38 @@ test("account change while provisioning prevents publishing an accepted result",
   const f = fixture(); f.controls.bootstrap = async () => { f.changeAccount(); };
   assert.equal(await f.options.onAuthenticated({ session: credentials, server, configuredToolTypes: [], accountGeneration: 3 }, new AbortController().signal), false);
   assert.ok(!f.calls.includes("publish"));
+});
+
+test("Main captures the original launch flow and forwards additionalData to the live controller", async () => {
+  const flow = "B".repeat(43);
+  const launchStatements = source.statements.filter(node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(row => ["initialClientHandoffFlow", "hasSingleInstanceLock"].includes(row.name.getText(source))));
+  const queue = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "queueClientHandoff")!;
+  let secondInstance!: ts.Node;
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+      && node.expression.expression.getText(source) === "app.on"
+      && node.expression.arguments[0]?.getText(source) === '"second-instance"') secondInstance = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.equal(launchStatements.length, 2);
+  assert.ok(secondInstance);
+  const script = ts.transpileModule([...launchStatements, queue, secondInstance].map(node => node.getText(source)).join("\n"),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  let captured: unknown;
+  let handler!: (event: object, argv: string[], directory: string, data: unknown) => void;
+  const received: string[] = [];
+  vm.runInNewContext(script, {
+    process: { argv: ["/synthetic/Anywhere", "--osir-client-handoff-flow", flow] },
+    clientHandoffFlowFromArgv, clientHandoffFlowFromSecondInstance, clientHandoffLockData,
+    app: { requestSingleInstanceLock: (data: unknown) => { captured = data; return true; },
+      on: (_event: string, callback: typeof handler) => { handler = callback; } },
+    clientHandoff: { run: async ({ flowId }: { flowId: string }) => { received.push(flowId); return { status: "authenticated" }; } },
+    pendingClientFlows: new Set(), showMainWindow: () => {}, isQuitting: false,
+    desktopOnboardingFromArgv: () => null, queueDesktopOnboarding: () => {},
+  });
+  handler({}, ["/synthetic/Anywhere", "--osir-client-handoff-flow", "--allow-file-access-from-files", "--enable-avfoundation", flow], "/", captured);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(received, [flow]);
 });

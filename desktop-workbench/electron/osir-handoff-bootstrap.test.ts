@@ -92,3 +92,72 @@ test("cancelled handoff performs no connection or model requests", async () => {
     fetcher: async () => { throw new Error("must not fetch"); },
   }), /已取消/);
 });
+
+for (const savedActive of [false, true]) {
+  test(`first-install unavailable Codex is rediscovered before ${savedActive ? "reusing a saved active instance" : "creating one runtime"}`, async () => {
+    const routes: string[] = [];
+    let discovered = false;
+    let created = savedActive;
+    const results = await bootstrapClientHandoff({ session, configuredToolTypes: ["codex"], signal: new AbortController().signal,
+      backend: { request: async <T>(route: string) => (route === "/device/binding" ? null : binding) as T },
+      fetcher: async (input, init) => {
+        const route = new URL(String(input)).pathname;
+        routes.push(`${init?.method ?? "GET"} ${route.split(binding.connectorId)[1]}`);
+        let data: unknown;
+        if (route.endsWith("/runtime-types/discover")) {
+          assert.equal(init?.method, "POST");
+          assert.equal(init?.body, undefined);
+          discovered = true;
+        }
+        if (route.includes("/runtime-types")) data = { connectorId: binding.connectorId,
+          runtimeTypes: [{ connectorId: binding.connectorId, runtimeType: "codex", present: true, available: discovered, schema: {} }] };
+        else if (route.endsWith("/active")) data = { ...runtime, active: true, status: "running" };
+        else if (init?.method === "POST") {
+          assert.ok(discovered, "must not create while binding is unavailable");
+          assert.ok(!created, "must not duplicate a saved runtime");
+          created = true; data = runtime;
+        } else data = { connectorId: binding.connectorId, runtimes: created
+          ? [{ ...runtime, active: savedActive, status: savedActive ? "running" : "stopped" }] : [] };
+        return new Response(JSON.stringify(data));
+      },
+    });
+    assert.deepEqual(results, [{ tool: "codex", runtimeId: runtime.runtimeId, status: "ready", code: "runtime_ready" }]);
+    assert.equal(routes.filter(route => route === "POST /runtime-types/discover").length, 1);
+    assert.equal(routes.filter(route => route === "POST /runtimes").length, savedActive ? 0 : 1);
+    assert.equal(routes.filter(route => route.endsWith("/active")).length, savedActive ? 0 : 1);
+  });
+}
+
+test("binding wait is cancelled without runtime creation or rediscovery", async () => {
+  const abort = new AbortController();
+  let writes = 0;
+  const pending = bootstrapClientHandoff({ session, configuredToolTypes: ["codex"], signal: abort.signal,
+    backend: { request: async <T>(route: string) => (route === "/device/binding" ? null : binding) as T },
+    fetcher: async (_input, init) => {
+      if (init?.method !== "GET") writes++;
+      queueMicrotask(() => abort.abort());
+      return new Response(JSON.stringify({ connectorId: binding.connectorId,
+        runtimeTypes: [{ connectorId: binding.connectorId, runtimeType: "codex", present: true, available: false, schema: {} }] }));
+    },
+  });
+  await assert.rejects(pending);
+  assert.equal(writes, 0);
+});
+
+test("binding wait ends at the deadline with fixed unavailable result and no runtime writes", async t => {
+  t.mock.timers.enable({ apis: ["Date"] });
+  let writes = 0;
+  const results = await bootstrapClientHandoff({ session, configuredToolTypes: ["codex"], signal: new AbortController().signal,
+    backend: { request: async <T>(route: string) => (route === "/device/binding" ? null : binding) as T },
+    fetcher: async (input, init) => {
+      const route = new URL(String(input)).pathname;
+      if (init?.method !== "GET") writes++;
+      t.mock.timers.setTime(Date.now() + 46_000);
+      return new Response(JSON.stringify(route.endsWith("/runtimes") ? { connectorId: binding.connectorId, runtimes: [] }
+        : { connectorId: binding.connectorId, runtimeTypes: [{ connectorId: binding.connectorId,
+          runtimeType: "codex", present: true, available: false, schema: {} }] }));
+    },
+  });
+  assert.deepEqual(results, [{ tool: "codex", status: "blocked", code: "runtime_type_unavailable" }]);
+  assert.equal(writes, 0);
+});

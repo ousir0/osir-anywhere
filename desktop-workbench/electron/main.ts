@@ -28,6 +28,7 @@ import { DesktopSessionManager, DesktopSessionStore } from "./desktop-session";
 import { bundledPythonExecutable } from "./connector-python";
 import { OsirClientHandoffController } from "./osir-client-handoff";
 import { OsirClientHandoffTransport } from "./osir-client-handoff-transport";
+import { clientHandoffFlowFromArgv, clientHandoffFlowFromSecondInstance, clientHandoffLockData } from "./osir-client-handoff-launch";
 import { fetchHandoffTrust, verifyHandoffBundle } from "./osir-handoff-trust";
 import { bootstrapClientHandoff } from "./osir-handoff-bootstrap";
 import type { PublicLocalDesktopBinding } from "./connector-types";
@@ -181,7 +182,8 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const initialClientHandoffFlow = clientHandoffFlowFromArgv(process.argv);
+const hasSingleInstanceLock = app.requestSingleInstanceLock(clientHandoffLockData(initialClientHandoffFlow));
 if (!hasSingleInstanceLock) app.quit();
 
 function webOutDir(): string {
@@ -968,10 +970,7 @@ async function initializeDesktopServices(): Promise<void> {
 
 /** Only the native Client launch parameter starts a handoff. Ordinary app
  * startup, restoring a session or visiting the dashboard never grants it. */
-function queueClientHandoff(argv: readonly string[]): void {
-  const indexes = argv.flatMap((value, index) => value === "--osir-client-handoff-flow" ? [index] : []);
-  if (indexes.length !== 1) return;
-  const flowId = argv[indexes[0] + 1];
+function queueClientHandoff(flowId: string | null): void {
   if (!flowId || !/^[A-Za-z0-9_-]{32,128}$/.test(flowId)) return;
   if (!clientHandoff) { if (pendingClientFlows.size === 0) pendingClientFlows.add(flowId); return; }
   showMainWindow();
@@ -1233,7 +1232,7 @@ if (hasSingleInstanceLock) {
   // Onboarding entries also work in development, where the OS protocol handler
   // is not installed and the URL only arrives through argv.
   const initialOnboarding = desktopOnboardingFromArgv(process.argv);
-  queueClientHandoff(process.argv);
+  queueClientHandoff(initialClientHandoffFlow);
   if (initialOnboarding) queueDesktopOnboarding(initialOnboarding);
   app.on("open-url", (event, rawUrl) => {
     event.preventDefault();
@@ -1280,7 +1279,7 @@ if (hasSingleInstanceLock) {
       showOnLaunch = ownership.status !== "owned";
     }
     createMainWindow(showOnLaunch, await resolveLaunchRoute(silentLoginLaunch));
-    for (const flowId of pendingClientFlows) queueClientHandoff(["--osir-client-handoff-flow", flowId]);
+    for (const flowId of pendingClientFlows) queueClientHandoff(flowId);
     pendingClientFlows.clear();
     installScopedTestMenu();
     if (process.platform === "darwin" && app.dock) app.dock.setIcon(appWindowIcon());
@@ -1294,8 +1293,8 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("activate", () => showMainWindow());
-  app.on("second-instance", (_event, argv) => {
-    queueClientHandoff(argv);
+  app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
+    queueClientHandoff(clientHandoffFlowFromSecondInstance(argv, additionalData));
     const onboarding = desktopOnboardingFromArgv(argv);
     if (onboarding) queueDesktopOnboarding(onboarding);
     showMainWindow();

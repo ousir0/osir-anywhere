@@ -190,6 +190,230 @@ def test_large_descriptor_still_uses_small_private_limit(fixture):
         fixture.reader().read()
 
 
+@pytest.mark.parametrize("change", ["heartbeat", "expired", "future", "revision",
+    "unavailable", "mode", "models", "fingerprint"])
+def test_descriptor_refresh_during_sampling_only_allows_valid_heartbeat(fixture, monkeypatch, change):
+    from connector.runtimes.codex import osir_binding
+
+    reader = fixture.reader()
+    pinned = reader.read()
+    original = osir_binding.read_secure
+    refreshed = False
+
+    def refresh_after_config(path, **kwargs):
+        nonlocal refreshed
+        data = original(path, **kwargs)
+        if path == fixture.home / "config.toml" and not refreshed:
+            refreshed = True
+            fixture.data["expiresAtMs"] += 1000
+            if change == "expired":
+                fixture.data["expiresAtMs"] = 999000
+            elif change == "future":
+                fixture.data["expiresAtMs"] = 1036000
+            elif change == "revision":
+                fixture.data["revision"] = "b" * 64
+            elif change == "unavailable":
+                fixture.data["available"] = False
+            elif change == "mode":
+                fixture.data["connectionMode"] = "direct"
+            elif change == "models":
+                fixture.data["models"][0]["title"] = "Changed title"
+            elif change == "fingerprint":
+                fixture.data["configSha256"] = "b" * 64
+            # Model Client's atomic publication; reordering JSON is harmless.
+            pending = fixture.path.with_suffix(".pending")
+            pending.write_text(json.dumps(fixture.data, sort_keys=True))
+            pending.chmod(0o600)
+            pending.replace(fixture.path)
+        return data
+
+    monkeypatch.setattr(osir_binding, "read_secure", refresh_after_config)
+    if change == "heartbeat":
+        assert reader.read() == pinned
+        assert asyncio.run(BoundCodexClient(Native(), reader, fixture.store).check()) == pinned
+    else:
+        client = BoundCodexClient(Native(), reader, fixture.store)
+        with pytest.raises(ModelBindingUnavailable):
+            asyncio.run(client.check())
+        assert client.failed
+    assert refreshed
+
+
+def test_model_selection_keeps_namespaced_alias_and_rejects_unpublished_ids(fixture):
+    binding = fixture.reader().read()
+    assert binding.select(None) == "active/a"
+    assert binding.select("active/b") == "active/b"
+    for alias in ("a", "other/a", "active/a "):
+        with pytest.raises(ModelBindingUnavailable):
+            binding.select(alias)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX inode race fixture")
+def test_atomic_heartbeat_replacing_open_descriptor_resamples_securely(fixture, monkeypatch):
+    reader = fixture.reader()
+    pinned = reader.read()
+    original = os.fdopen
+    inode = fixture.path.stat().st_ino
+    replaced = False
+
+    class DuringRead:
+        def __init__(self, stream):
+            self.stream = stream
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.stream.close()
+        def read(self, maximum):
+            nonlocal replaced
+            data = self.stream.read(maximum)
+            fixture.data["expiresAtMs"] += 1000
+            pending = fixture.path.with_suffix(".pending")
+            pending.write_text(json.dumps(fixture.data))
+            pending.chmod(0o600)
+            pending.replace(fixture.path)
+            replaced = True
+            return data
+
+    def open_during_refresh(fd, *args, **kwargs):
+        matches = not replaced and os.fstat(fd).st_ino == inode
+        stream = original(fd, *args, **kwargs)
+        return DuringRead(stream) if matches else stream
+
+    monkeypatch.setattr(os, "fdopen", open_during_refresh)
+    assert reader.read() == pinned
+    assert replaced
+
+
+def test_descriptor_resampling_is_bounded_and_never_accepts_unsafe_file(fixture, monkeypatch):
+    from connector.runtimes.codex import osir_binding
+
+    reads = 0
+    def unavailable(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        raise ModelBindingUnavailable()
+
+    monkeypatch.setattr(osir_binding, "read_secure", unavailable)
+    with pytest.raises(ModelBindingUnavailable):
+        fixture.reader().read()
+    assert reads == 3
+
+
+@pytest.mark.parametrize("reason,code", [("open-file", 32), ("open-file", 33),
+    ("read-file", 33), ("file-changed", None)])
+@pytest.mark.parametrize("sample", [1, 2])
+def test_windows_descriptor_race_resamples_both_samples(fixture, monkeypatch, reason, code, sample):
+    from connector.runtimes.codex import osir_binding
+    from connector.runtimes.codex.osir_binding_windows import WindowsFileReadError
+
+    reader = fixture.reader()
+    pinned = reader.read()
+    original = osir_binding.read_secure
+    reads = 0
+
+    def racing(path, **kwargs):
+        nonlocal reads
+        if kwargs.get("private"):
+            reads += 1
+            if sample <= reads < sample + 2:
+                raise WindowsFileReadError(reason, code)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(osir_binding, "read_secure", racing)
+    assert reader.read() == pinned
+    assert reads == 4  # Two valid samples plus two transient failures.
+
+
+@pytest.mark.parametrize("reason,code", [("open-file", 32), ("open-file", 33),
+    ("read-file", 33), ("file-changed", None), ("foreign-owner", 32),
+    ("untrusted-writer", 32), ("reparse-or-file-type", 32), ("redirected-path", 32),
+    ("security-changed", 32), ("directory-changed", 32), ("token-changed", 32),
+    ("links-or-size", 32), ("invalid-read-limit", 32), ("open-file", 5),
+    ("open-file", 2), ("open-file", 3), ("read-file", 32), ("file-changed", 32),
+    ("generic-oserror", 32)])
+def test_windows_descriptor_race_budget_and_unsafe_rejection(fixture, monkeypatch, reason, code):
+    from connector.runtimes.codex import osir_binding
+    from connector.runtimes.codex.osir_binding_windows import WindowsFileReadError
+
+    reads = 0
+    def unavailable(path, **kwargs):
+        nonlocal reads
+        assert path == fixture.path and kwargs.get("private") is True
+        reads += 1
+        if reason == "generic-oserror":
+            error = OSError("synthetic unavailable file")
+            error.reason, error.winerror = "open-file", code
+            raise error
+        raise WindowsFileReadError(reason, code)
+
+    monkeypatch.setattr(osir_binding, "read_secure", unavailable)
+    with pytest.raises(ModelBindingUnavailable):
+        fixture.reader().read()
+    transient = (reason, code) in {("open-file", 32), ("open-file", 33),
+        ("read-file", 33), ("file-changed", None)}
+    assert reads == (3 if transient else 1)
+
+
+@pytest.mark.parametrize("change", ["expired", "elapsed", "future", "revision", "config", "unsafe"])
+def test_windows_descriptor_race_never_bypasses_grant_checks(fixture, monkeypatch, change):
+    from connector.runtimes.codex import osir_binding
+    from connector.runtimes.codex.osir_binding_windows import WindowsFileReadError
+
+    reader = fixture.reader()
+    pinned = reader.read()
+    original = osir_binding.read_secure
+    reads = 0
+
+    def racing(path, **kwargs):
+        nonlocal reads
+        if kwargs.get("private"):
+            reads += 1
+            if reads == 1:
+                if change == "expired":
+                    fixture.data["expiresAtMs"] = 999000
+                elif change == "elapsed":
+                    reader.clock = lambda: 1031
+                elif change == "future":
+                    fixture.data["expiresAtMs"] = 1036000
+                elif change == "revision":
+                    fixture.data["revision"] = "b" * 64
+                elif change == "config":
+                    config = (fixture.home / "config.toml").read_bytes().replace(b'Synthetic', b'Changed')
+                    (fixture.home / "config.toml").write_bytes(config)
+                    fixture.data["configSha256"] = hashlib.sha256(config).hexdigest()
+                fixture.write()
+                raise WindowsFileReadError("open-file", 32)
+            if change == "unsafe":
+                raise WindowsFileReadError("foreign-owner")
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(osir_binding, "read_secure", racing)
+    with pytest.raises(ModelBindingUnavailable):
+        reader.read()
+    assert reader._pinned == pinned
+    assert reads == 2
+
+
+@pytest.mark.parametrize("name", ["config.toml", "catalog.json"])
+def test_windows_descriptor_retry_never_retries_native_config_or_catalog(fixture, monkeypatch, name):
+    from connector.runtimes.codex import osir_binding
+    from connector.runtimes.codex.osir_binding_windows import WindowsFileReadError
+
+    original = osir_binding.read_secure
+    reads = 0
+    def unavailable(path, **kwargs):
+        nonlocal reads
+        if path == fixture.home / name:
+            reads += 1
+            raise WindowsFileReadError("open-file", 32)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(osir_binding, "read_secure", unavailable)
+    with pytest.raises(ModelBindingUnavailable):
+        fixture.reader().read()
+    assert reads == 1
+
+
 @pytest.mark.parametrize("values", [
     {"codexHome": "/other"}, {"environment": {"OPENAI_API_KEY": "sentinel"}},
     {"modelGateway": {"baseUrl": "https://untrusted.invalid"}},

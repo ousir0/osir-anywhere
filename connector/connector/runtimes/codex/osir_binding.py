@@ -160,18 +160,46 @@ class LocalCodexBinding:
     def fresh(self):
         return type(self)(self.path, clock=self.clock)
 
+    def _descriptor(self):
+        # An atomic heartbeat can replace the named file while read_secure has
+        # its old inode open. Resample from scratch, retaining all inode, owner
+        # and permission checks; never retry a parsed invalid grant.
+        for attempt in range(3):
+            try:
+                descriptor = read_secure(self.path, private=True)
+                break
+            except ModelBindingUnavailable:
+                if attempt == 2:
+                    raise
+            except OSError as error:
+                from .osir_binding_windows import WindowsFileReadError
+
+                # Windows preserves structured sharing/lock errors instead of
+                # wrapping them in ModelBindingUnavailable. Retry only those
+                # races, not ACL, owner, reparse, directory or token failures.
+                transient = isinstance(error, WindowsFileReadError) and (
+                    error.reason, getattr(error, "winerror", None)) in {
+                        ("open-file", 32), ("open-file", 33),
+                        ("read-file", 33), ("file-changed", None),
+                    }
+                if attempt == 2 or not transient:
+                    raise
+        raw = json.loads(descriptor, object_pairs_hook=_unique)
+        if not isinstance(raw, dict) or not set(raw).issubset(_FIELDS):
+            raise ModelBindingUnavailable()
+        expiry, now = raw.get("expiresAtMs"), self.clock() * 1000
+        if (type(raw.get("schemaVersion")) is not int or raw["schemaVersion"] != 1
+                or raw.get("source") != "osir-client" or raw.get("available") is not True
+                or type(expiry) is not int or not now < expiry <= now + 35000
+                or raw.get("connectionMode") not in {"direct", "proxy"}):
+            raise ModelBindingUnavailable()
+        # A heartbeat renews the grant, not the pinned model/route revision.
+        # Validate each sample's TTL, then compare every other descriptor field.
+        return {key: value for key, value in raw.items() if key != "expiresAtMs"}
+
     def read(self) -> ModelBinding:
         try:
-            descriptor = read_secure(self.path, private=True)
-            raw = json.loads(descriptor, object_pairs_hook=_unique)
-            if not isinstance(raw, dict) or not set(raw).issubset(_FIELDS):
-                raise ModelBindingUnavailable()
-            expiry, now = raw.get("expiresAtMs"), self.clock() * 1000
-            if (type(raw.get("schemaVersion")) is not int or raw["schemaVersion"] != 1
-                    or raw.get("source") != "osir-client" or raw.get("available") is not True
-                    or type(expiry) is not int or not now < expiry <= now + 35000
-                    or raw.get("connectionMode") not in {"direct", "proxy"}):
-                raise ModelBindingUnavailable()
+            raw = self._descriptor()
             home = canonical_directory(raw["codexHome"])
             config = read_secure(home / "config.toml")
             if hashlib.sha256(config).hexdigest() != raw["configSha256"]:
@@ -225,7 +253,7 @@ class LocalCodexBinding:
                 raise ModelBindingUnavailable()
             if pointer and hashlib.sha256(read_secure(catalog, maximum=CATALOG_MAXIMUM)).hexdigest() != catalog_hash:
                 raise ModelBindingUnavailable()
-            if read_secure(self.path, private=True) != descriptor:
+            if self._descriptor() != raw:
                 raise ModelBindingUnavailable()
             self._pinned = binding
             return binding
