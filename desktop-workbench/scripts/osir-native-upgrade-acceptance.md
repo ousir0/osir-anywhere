@@ -1,19 +1,19 @@
-# Anywhere 2.2.1 revision 1 原包原生升级验收
+# Anywhere 2.2.1 revision 2 原包原生升级验收
 
-本独立 harness 继承已通过的 r2 upgrade `98444e185f84650b4dc71bee1fea5e032ab066a0`，仅更新候选绑定并追加同公开版本的 revision 发现验收。最终产品源码、安装包和编译输出不修改。本地合成测试不等于新包原生验收通过。
+本独立 harness 从旧成功 harness `91fcddfb8b06a6f3c46dcc083780d128de0fdc8c` 创建，仅更新 r2 候选绑定及必要的 revision 发现对照。最终产品源码、安装包和编译输出不修改。本地合成测试不等于新包原生验收通过。
 
 ## 固定产品与独立控制
 
 | 项目 | 精确值 |
 | --- | --- |
 | Repository | `ousir0/osir-anywhere`，已授权 public |
-| Product commit | `27b001b80ee3df91f37e3cb9ea70fe007f530b33` |
-| Source SHA256 | `5f5d727080f81d01e1749df028daa3cfcb8c4a1eb126be9d3999745861ce6b9a` |
-| Recipe SHA256 | `258b01591b9d82cfdfae5b0dcb4a22a01fd4e65502fd7c042d5bed69b2d56bb7` |
-| Release identity | `osir-anywhere-2.2.1-20261115-r1`，`releaseRevision=1` |
-| Producer run | `43631758068`；attempt、成功平台 job 和工件身份以新原始证据为准 |
-| Upgrade control branch | `codex/anywhere-221-r1-handoff-acceptance-20261115` |
-| Upgrade local Git worktree | `/Users/ouwei/.codex/release-evidence/20261115-anywhere-221-r1-acceptance/harness-checkout` |
+| Product commit | `b95e4498b418eb582c37ae17284fa0699ef1345c` |
+| Source SHA256 | `d2f00392890f4b7f38d0d4faad82e5d900206eba9440b7674d1488cf9126ba66` |
+| Recipe SHA256 | `e9c517add26144970e288de50d882935fe09ec9283db420bd3228370711b07d9` |
+| Release identity | `osir-anywhere-2.2.1-20261115-r2`，`releaseRevision=2` |
+| Producer run | `43715039594`；attempt、成功平台 job 和工件身份以新原始证据为准 |
+| Upgrade control branch | `codex/anywhere-221-r2-upgrade-acceptance-20261115` |
+| Upgrade local Git worktree | `/Users/ouwei/.codex/release-evidence/20261115-anywhere-221-r2-upgrade-acceptance/harness-checkout` |
 | Smoke harness SHA | `8da80c839c714e1b3c8d6989559f02a8a09c52b2`，原逻辑原样复用 |
 | Smoke control branch | `codex/anywhere-221-smoke-readiness-20261114` |
 | Smoke local Git checkout | `/Users/ouwei/.codex/release-evidence/20261114-anywhere-release-control` |
@@ -32,13 +32,13 @@
 
 ## 新增 revision 发现验收
 
-直接执行最终 ASAR 的 `DesktopUpdateService` 与 `readPackagedRevision`。后者从可信 `app.getAppPath()` 读取 `dist/build-info.json`，必须得到已安装 revision 1；缺失、旧格式、错误版本或 revision 均不能冒充新包。
+直接执行最终 ASAR 的 `DesktopUpdateService` 与 `readPackagedRevision`。后者从可信 `app.getAppPath()` 读取 `dist/build-info.json`，必须得到已安装 revision 2；缺失、旧格式、错误版本或 revision 均不能冒充新包。
 
 临时 RSA key 只在内存中；所有 fetch 由合成 fetcher 接管，没有网络 fallback。顺序为：
 
 1. Server health 控制：2.2.0。
-2. 清单 2.2.1 revision 1：无更新。
-3. 清单 2.2.1 revision 2：有更新、dialogOpen、适用 artifact、无错误。
+2. 清单 2.2.1 revision 2：无更新。
+3. 清单 2.2.1 revision 3：有更新、dialogOpen、适用 artifact、无错误。
 4. 清单 2.2.1 revision 0：无更新，防止降级。
 5. 清单 2.2.2 revision 0：仍发现 PATCH 更新。
 6. 坏签名：checkFailed。
@@ -66,7 +66,7 @@ artifactSha256, artifactSize, systemSignatureReportSha256
 
 仅 win32-arm64 另需 windowsArm64EvidenceSha256。archiveSha256 是完整 GitHub ZIP 的 API digest；artifactSha256/size 是 ZIP 内最终 DMG/EXE；receiptSha256 和 signature digest 均对原始文件字节计算。不能互相替代。
 
-revision 通过固定 recipeSha256、`receipt.plan.releaseRevision === 1`、精确 releaseId 和最终安装 ASAR build-info 三层绑定。新 upgrade CI 每个有原包的阶段复核 receipt；任一字段不符即失败。
+revision 通过固定 recipeSha256、`receipt.plan.releaseRevision === 2`、精确 releaseId 和最终安装 ASAR build-info 三层绑定。新 upgrade CI 每个有原包的阶段复核 receipt；任一字段不符即失败。
 
 生成输入为新 run/完整 jobs/artifacts API 原始快照，加各目标原始 build-receipt.json、compiled.json、source-provenance.json、system-signature.json、resolved-yarn.lock。只读本地 evidence 生成 bindings；旧 r2 prepare-controls.mjs 的 run/ID/lock 不可复用。元数据审核不等于完整 ZIP/installer 校验；后者仍由原生 runner 强制执行。
 
@@ -79,4 +79,14 @@ inputs: {harness_commit: 对应精确 40 位 SHA,
          target: darwin-universal | win32-x64 | all}
 ```
 
-smoke workflow `osir-anywhere-artifact-acceptance.yml`（417788808）；upgrade workflow `osir-anywhere-upgrade-acceptance.yml`（417813131）。工作流 ref 和 harness_commit 必须一致，均不能用 product commit 代替。仅由主控 push/dispatch；本任务只做本地 commit。
+smoke workflow `osir-anywhere-artifact-acceptance.yml`（417788808）；upgrade workflow `osir-anywhere-upgrade-acceptance.yml`（417813131）。工作流 ref 和 harness_commit 必须一致，均不能用 product commit 代替。本任务仅推送独立 harness 分支；原包下载、真实 binding、workflow dispatch 和发布均由主控执行，本任务不派发 workflow。
+
+
+## 本次增量验证（2026-11-15）
+
+- 旧成功 harness 已确认 HEAD 为 `91fcddfb8b06a6f3c46dcc083780d128de0fdc8c`，工作区干净；新分支从此提交独立创建。
+- 新产品 detached sparse checkout 的 HEAD、source inventory fingerprint、recipe 原始字节 SHA256、releaseId/releaseRevision 均与上表一致。仅读取 6 个已校验的更新发现 TypeScript 模块作为合成测试输入。
+- Node `22.22.2` 定向测试：**7 passed / 0 failed / 0 skipped**。覆盖精确产品 pin、拒绝旧 r1/混合 pin、receipt revision 2、新 revision 常量、序列化真实更新服务的 2→3 发现及错误 revision 拒绝；另包含既有独立工具版本控制。日志保存在独立目录 `../r2-pins-focused-tests.log`。
+- 执行两个测试文件 `osir-native-upgrade-acceptance.test.mjs` 和 `osir-native-upgrade-acceptance.ci.test.mjs`，使用 `--test-name-pattern='upgrade plan binds|previous r1|upgrade receipt|r2 discovery constants|serialized probe exercises|same public revision discovery|discovery uses|versions'`。`OSIR_UPGRADE_TEST_SOURCE_ROOT` 指向冻结新产品 sparse checkout；binding 使用明确的合成工件字段，仅用于本地测试，不能用于真实 workflow dispatch。
+- 本次仅变更 upgrade harness 的新产品/revision pin、必要测试及说明；smoke 逻辑、原生 second-instance 门禁和 connector 测试均未修改或重复执行。未运行原包原生验收、未下载原包、未派发 workflow、未修改生产配置。
+- 交接时由主控将新原包生成的完整 bindings 原始字节及 SHA256 传给 workflow，并令 `harness_commit` 与所选 workflow ref 对应同一精确提交。Producer `43715039594` 的 artifact/run attempt/receipt/installer/signature/lock 仍由真实证据绑定，本次不将合成数据或口头 ZIP 摘要写成生产 binding。

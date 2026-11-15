@@ -1,6 +1,7 @@
 name: OSIR Anywhere controlled native upgrade acceptance
 
-# Independent harness only. The original 2.2.1 installer is never rebuilt.
+# Independent harness pins the final 2.2.1 revision 2 product in upgrade CI.
+# The original installer is never rebuilt; bindings must come from the new run.
 # Baseline preparation creates an explicitly test-only 2.2.0 derivative.
 # This is not the published 2.2.0 baseline or historical migration evidence.
 on:
@@ -27,7 +28,7 @@ on:
         type: string
         required: true
       bindings_json:
-        description: Same reviewed immutable original artifact bindings as native smoke
+        description: Reviewed final 2.2.1 revision 2 original artifact bindings; same raw bytes as native smoke
         type: string
         required: true
       bindings_sha256:
@@ -79,7 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node desktop-workbench/scripts/osir-artifact-acceptance-ci.mjs plan
-      - name: Bind additional upgrade harness files to this exact workflow SHA
+      - name: Bind final revision 2 product and upgrade harness files to this exact workflow SHA
         id: upgrade
         run: node desktop-workbench/scripts/osir-native-upgrade-acceptance.ci.mjs plan
       - name: Check out only frozen product inputs required by the synthetic discovery test

@@ -12,9 +12,9 @@ import { SHA, bytes, check, digest, fingerprint, immutableFile, inspect, json, m
 
 export const TOOL_VERSIONS = { 'electron-builder': '26.18.1', '@electron/asar': '3.4.1', typescript: '6.0.3' };
 export const UPGRADE_PRODUCT = Object.freeze({
-  sourceCommit: '27b001b80ee3df91f37e3cb9ea70fe007f530b33',
-  sourceSha256: '5f5d727080f81d01e1749df028daa3cfcb8c4a1eb126be9d3999745861ce6b9a',
-  recipeSha256: '258b01591b9d82cfdfae5b0dcb4a22a01fd4e65502fd7c042d5bed69b2d56bb7',
+  sourceCommit: 'b95e4498b418eb582c37ae17284fa0699ef1345c',
+  sourceSha256: 'd2f00392890f4b7f38d0d4faad82e5d900206eba9440b7674d1488cf9126ba66',
+  recipeSha256: 'e9c517add26144970e288de50d882935fe09ec9283db420bd3228370711b07d9',
   version: FINAL_VERSION,
 });
 export function verifyUpgradeProduct(bindings) {
@@ -25,7 +25,7 @@ export function verifyUpgradeProduct(bindings) {
 // pinned recipe and the original receipt, then read again from installed ASAR.
 export function verifyUpgradeReceipt(receipt) {
   const plan = receipt?.plan;
-  check(plan?.releaseRevision === FINAL_REVISION && plan.releaseId === 'osir-anywhere-2.2.1-20261115-r1', 'Upgrade receipt must identify frozen revision 1');
+  check(plan?.releaseRevision === FINAL_REVISION && plan.releaseId === 'osir-anywhere-2.2.1-20261115-r2', 'Upgrade receipt must identify frozen revision 2');
   for (const [key, value] of Object.entries(UPGRADE_PRODUCT)) check(plan[key === 'sourceCommit' ? 'checkoutHead' : key] === value, `Upgrade receipt frozen identity mismatch: ${key}`);
   return receipt;
 }

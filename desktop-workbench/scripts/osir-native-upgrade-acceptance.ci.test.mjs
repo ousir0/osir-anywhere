@@ -8,9 +8,27 @@ import { DISCOVERY_TEST_MODULES, TOOL_VERSIONS, UPGRADE_PRODUCT, discoveryTestSo
 import { bytes, digest, fingerprint } from './osir-anywhere-release-common.mjs';
 
 test('upgrade plan binds frozen 2.2.1 source/recipe/version while archive/run/lock remain reviewed inputs', () => {
+  assert.deepEqual(UPGRADE_PRODUCT, {
+    sourceCommit: 'b95e4498b418eb582c37ae17284fa0699ef1345c',
+    sourceSha256: 'd2f00392890f4b7f38d0d4faad82e5d900206eba9440b7674d1488cf9126ba66',
+    recipeSha256: 'e9c517add26144970e288de50d882935fe09ec9283db420bd3228370711b07d9',
+    version: '2.2.1',
+  });
   const bindings = { ...UPGRADE_PRODUCT, configSha256: 'a'.repeat(64), dependencyLockSha256: 'b'.repeat(64) };
   assert.equal(verifyUpgradeProduct(bindings), bindings);
   for (const key of Object.keys(UPGRADE_PRODUCT)) assert.throws(() => verifyUpgradeProduct({ ...bindings, [key]: 'different' }), /frozen 2.2.1/);
+});
+
+test('upgrade product rejects the previous r1 product and any mixture of old and new pins', () => {
+  const previous = {
+    sourceCommit: '27b001b80ee3df91f37e3cb9ea70fe007f530b33',
+    sourceSha256: '5f5d727080f81d01e1749df028daa3cfcb8c4a1eb126be9d3999745861ce6b9a',
+    recipeSha256: '258b01591b9d82cfdfae5b0dcb4a22a01fd4e65502fd7c042d5bed69b2d56bb7',
+  };
+  assert.throws(() => verifyUpgradeProduct({ ...UPGRADE_PRODUCT, ...previous }), /frozen 2.2.1/);
+  for (const [key, value] of Object.entries(previous)) {
+    assert.throws(() => verifyUpgradeProduct({ ...UPGRADE_PRODUCT, [key]: value }), /frozen 2.2.1/);
+  }
 });
 
 async function fixture(t) {
@@ -81,11 +99,12 @@ test('sparse frozen discovery inputs require the reviewed commit, inventory and 
   await assert.rejects(discoveryTestSources(f.checkout, bindings), /source changed/);
 });
 
-test('upgrade receipt requires the exact revision 1 release and frozen product identity', () => {
+test('upgrade receipt requires the exact revision 2 release and frozen product identity', () => {
   const { sourceCommit, ...product } = UPGRADE_PRODUCT;
-  const receipt = { plan: { ...product, checkoutHead: sourceCommit, releaseRevision: 1, releaseId: 'osir-anywhere-2.2.1-20261115-r1' } };
+  const receipt = { plan: { ...product, checkoutHead: sourceCommit, releaseRevision: 2, releaseId: 'osir-anywhere-2.2.1-20261115-r2' } };
   assert.equal(verifyUpgradeReceipt(receipt), receipt);
-  for (const patch of [{ releaseRevision: undefined }, { releaseRevision: 0 }, { releaseRevision: 2 }, { releaseRevision: '1' }, { releaseId: 'legacy' },
+  for (const patch of [{ releaseRevision: undefined }, { releaseRevision: 0 }, { releaseRevision: 1 }, { releaseRevision: 3 }, { releaseRevision: '2' },
+    { releaseId: 'osir-anywhere-2.2.1-20261115-r1' }, { releaseId: 'legacy' },
     ...Object.keys(receipt.plan).map(key => ({ [key]: 'different' }))]) {
     assert.throws(() => verifyUpgradeReceipt({ plan: { ...receipt.plan, ...patch } }));
   }
