@@ -16,8 +16,8 @@ import { SHA, bytes, check, digest, fingerprint, json, separate, within } from '
 
 export const BASELINE_VERSION = '2.2.0';
 export const FINAL_VERSION = '2.2.1';
-export const FINAL_REVISION = 3;
-export const NEXT_REVISION = 4;
+export const FINAL_REVISION = 4;
+export const NEXT_REVISION = 5;
 export const PATCH_VERSION = '2.2.2';
 // Server compatibility is independent of the Desktop release being tested.
 export const SERVER_VERSION = '2.2.0';
@@ -381,7 +381,7 @@ export function parseArguments(args) {
 
 async function main() {
   if (process.argv.slice(2).join(' ') === '--help') {
-    console.log('prepare-baseline --spec ABS --output NEW_ABS\nrun --spec ABS --output NEW_ABS\nRemote GitHub-hosted clean native GUI CI only. prepare reuses frozen compiled outputs or extracts them from final Desktop 2.2.1, then packages test-only 2.2.0 (not the published historical release). run installs baseline and original final bytes; discovery tests Desktop 2.2.1 revision 3 -> revision 4 and 2.2.2 with Server fixed at 2.2.0. Network policy: unrestricted-no-product-credentials; public network may be reachable, never an offline claim. No production source writes or publish. See osir-native-upgrade-acceptance.md.'); return;
+    console.log('prepare-baseline --spec ABS --output NEW_ABS\nrun --spec ABS --output NEW_ABS\nRemote GitHub-hosted clean native GUI CI only. prepare reuses frozen compiled outputs or extracts them from final Desktop 2.2.1, then packages test-only 2.2.0 (not the published historical release). run installs baseline and original final bytes; discovery tests Desktop 2.2.1 revision 4 -> revision 5 and 2.2.2 with Server fixed at 2.2.0. Network policy: unrestricted-no-product-credentials; public network may be reachable, never an offline claim. No production source writes or publish. See osir-native-upgrade-acceptance.md.'); return;
   }
   const options = parseArguments(process.argv.slice(2)), spec = await json(options.spec);
   let result;
