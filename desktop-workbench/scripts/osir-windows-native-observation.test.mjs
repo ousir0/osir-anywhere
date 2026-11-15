@@ -212,7 +212,8 @@ function nsisFixture() {
 test('NSIS keeps exact original install flags, one attempt and the existing 180s bound', async () => {
   const f = nsisFixture(); assert.equal(await f.execute(), 'installer completed');
   assert.equal(f.runs.length, 1);
-  assert.deepEqual(f.runs[0], ['D:\\original\\final.exe', ['/S', '/currentuser', '/D=D:\\work\\installed'], 'final-nsis-install', { timeout: 180000 }]);
+  assert.deepEqual(f.runs[0].slice(0, 3), ['D:\\original\\final.exe', ['/S', '/currentuser', '/D=D:\\work\\installed'], 'final-nsis-install']);
+  assert.equal(f.runs[0][3].timeout, 180000); assert.equal(typeof f.runs[0][3].onSpawn, 'function');
   assert.equal(f.probes.length, 1); assert.equal(f.cancelled, true);
   assert.equal(f.timer.delay, 150000); assert.equal(NSIS_TIMEOUT_MS, 180000);
   assert.equal(NSIS_OBSERVE_AT_MS + PROCESS_PROBE_TIMEOUT_MS < NSIS_TIMEOUT_MS, true);
@@ -221,14 +222,16 @@ test('NSIS keeps exact original install flags, one attempt and the existing 180s
 
 test('slow NSIS captures scoped process evidence before cleanup and rethrows the exact timeout', async () => {
   const f = nsisFixture(), failure = timeout(); failure.commandResult.executable = 'D:\\original\\final.exe';
-  f.adapter.run = async (...args) => { f.runs.push(args); f.clock.value = 150000; f.timer.callback(); await Promise.resolve(); f.clock.value = 180000; throw failure; };
+  f.adapter.run = async (...args) => { f.runs.push(args); args[3].onSpawn({ pid: 4321 }); f.clock.value = 150000; f.timer.callback(); await Promise.resolve(); f.clock.value = 180000; throw failure; };
   await assert.rejects(f.execute(), error => error === failure);
   assert.equal(f.runs.length, 1); assert.equal(f.probes.length, 2);
   assert.ok(f.records.some(row => row.phase === 'slow' && row.result === 'observed'));
+  assert.equal(f.probes[0][2].env.OSIR_NATIVE_DIAGNOSTIC_PID, '0');
+  assert.equal(f.probes[1][2].env.OSIR_NATIVE_DIAGNOSTIC_PID, '4321');
   assert.equal(f.records.at(-1).commandElapsedMs, 180000);
   assert.equal(f.records.at(-1).command.exitObservedAfterTimeoutCleanup, true);
   for (const [exe, args, options] of f.probes) {
-    assert.equal(exe, 'powershell.exe'); assert.equal(args.at(-1), WINDOWS_PROCESS_OBSERVATION);
+    assert.equal(exe, 'python'); assert.deepEqual(args.slice(0, 2), ['-I', '-c']); assert.equal(args.at(-1), WINDOWS_PROCESS_OBSERVATION);
     assert.equal(options.timeout, 10000); assert.equal(options.env.OSIR_NATIVE_DIAGNOSTIC_INSTALLER, 'D:\\original\\final.exe');
     assert.equal(options.env.OSIR_NATIVE_DIAGNOSTIC_DESTINATION, 'D:\\work\\installed');
   }
@@ -277,9 +280,11 @@ test('final stage evidence write failure retains the original installer exceptio
 });
 
 test('read-only process query has finite tree/row bounds and no account, command line or termination query', () => {
-  assert.match(WINDOWS_PROCESS_OBSERVATION, /OperationTimeoutSec 5/);
-  assert.match(WINDOWS_PROCESS_OBSERVATION, /8192/); assert.match(WINDOWS_PROCESS_OBSERVATION, /-lt 16/);
-  assert.match(WINDOWS_PROCESS_OBSERVATION, /-First 128/);
+  assert.match(WINDOWS_PROCESS_OBSERVATION, /CreateToolhelp32Snapshot/);
+  assert.match(WINDOWS_PROCESS_OBSERVATION, /QueryFullProcessImageNameW/);
+  assert.doesNotMatch(WINDOWS_PROCESS_OBSERVATION, /powershell|Get-CimInstance|Get-Process|GetWindowText/);
+  assert.match(WINDOWS_PROCESS_OBSERVATION, /8192/); assert.match(WINDOWS_PROCESS_OBSERVATION, /range\(16\)/);
+  assert.match(WINDOWS_PROCESS_OBSERVATION, /\[:128\]/);
   assert.doesNotMatch(WINDOWS_PROCESS_OBSERVATION, /CommandLine|Stop-Process|taskkill|Win32_Environment|Get-Credential|MainWindowTitle|Invoke-CimMethod/);
 });
 
@@ -287,4 +292,10 @@ test('smoke and upgrade Git-byte provenance include the new transitive helper an
   for (const files of [HARNESS_FILES, REVIEW_FILES]) for (const suffix of ['mjs', 'test.mjs']) {
     assert.ok(files.includes(`desktop-workbench/scripts/osir-windows-native-observation.${suffix}`));
   }
+});
+
+// Compile the embedded Python independently, without executing Windows APIs.
+test('native process observer is valid Python without executing Windows APIs', async () => {
+  const checked = await command('python3', ['-I', '-c', 'import sys;compile(sys.stdin.read(), "observer", "exec")'], { input: WINDOWS_PROCESS_OBSERVATION });
+  assert.equal(checked.code, 0, checked.stderr);
 });

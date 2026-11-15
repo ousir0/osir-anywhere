@@ -103,7 +103,7 @@ jobs:
       - name: Focused contracts and synthetic controls (not native acceptance)
         env:
           OSIR_UPGRADE_TEST_SOURCE_ROOT: ${{ github.workspace }}/frozen-test-source
-        run: NODE_PATH="$RUNNER_TEMP/osir-upgrade-test-tools/node_modules" node --test desktop-workbench/scripts/osir-native-upgrade-acceptance.test.mjs desktop-workbench/scripts/osir-native-upgrade-acceptance.ci.test.mjs desktop-workbench/scripts/osir-artifact-acceptance-ci.test.mjs
+        run: NODE_PATH="$RUNNER_TEMP/osir-upgrade-test-tools/node_modules" node --test desktop-workbench/scripts/osir-native-upgrade-acceptance.test.mjs desktop-workbench/scripts/osir-native-upgrade-acceptance.ci.test.mjs desktop-workbench/scripts/osir-artifact-acceptance-ci.test.mjs desktop-workbench/scripts/osir-windows-native-observation.test.mjs
       - uses: actions/upload-artifact@v6
         with:
           name: osir-upgrade-reviewed-bindings-${{ github.run_id }}-${{ github.run_attempt }}

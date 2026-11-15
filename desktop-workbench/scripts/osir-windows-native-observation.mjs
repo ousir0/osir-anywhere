@@ -118,19 +118,51 @@ export async function observeWindowsGui(probe, evidence, stage, now = Date.now) 
 
 // Enumerate paths/ancestry for this installer and installation directory only.
 // Do not emit other processes, CommandLine, environment, window titles or users.
-export const WINDOWS_PROCESS_OBSERVATION = String.raw`$ErrorActionPreference='Stop';
-$installer=$env:OSIR_NATIVE_DIAGNOSTIC_INSTALLER;$destination=$env:OSIR_NATIVE_DIAGNOSTIC_DESTINATION.TrimEnd('\')+'\';
-$all=@(Get-CimInstance -ClassName Win32_Process -OperationTimeoutSec 5);
-if($all.Count -gt 8192){throw 'Process inventory exceeds observation bound'};
-$ids=New-Object 'System.Collections.Generic.HashSet[int]';
-foreach($p in $all){if($p.ExecutablePath -and ($p.ExecutablePath -ieq $installer -or $p.ExecutablePath.StartsWith($destination,[StringComparison]::OrdinalIgnoreCase))){[void]$ids.Add([int]$p.ProcessId)}};
-$depthLimitReached=$false;
-for($depth=0;$depth -lt 16;$depth++){$changed=$false;foreach($p in $all){if($ids.Contains([int]$p.ParentProcessId) -and $ids.Add([int]$p.ProcessId)){$changed=$true}};if(-not $changed){break};if($depth -eq 15){$depthLimitReached=$true}};
-$rows=@(foreach($p in @($all|Where-Object {$ids.Contains([int]$_.ProcessId)}|Sort-Object ProcessId|Select-Object -First 128)){
-  $live=Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue;
-  @{pid=[int]$p.ProcessId;parentPid=[int]$p.ParentProcessId;name=$p.Name;executablePath=$p.ExecutablePath;sessionId=[int]$p.SessionId;mainWindowHandle=if($live){$live.MainWindowHandle.ToInt64()}else{$null};responding=if($live){$live.Responding}else{$null}}
-});
-@{schemaVersion=1;queryOnly=$true;matchedCount=$ids.Count;truncated=($ids.Count -gt 128);depthLimitReached=$depthLimitReached;processes=$rows}|ConvertTo-Json -Depth 5 -Compress`;
+// Native Toolhelp avoids the same PowerShell/CIM provider that the original
+// NSIS installer can be waiting on. Observe only; it never changes installer state.
+export const WINDOWS_PROCESS_OBSERVATION = String.raw`import ctypes as c, json, os
+from ctypes import wintypes as w
+k=c.WinDLL('kernel32',use_last_error=True)
+class Entry(c.Structure):
+    _fields_=[('size',w.DWORD),('usage',w.DWORD),('pid',w.DWORD),('heap',c.c_size_t),('module',w.DWORD),('threads',w.DWORD),('parent',w.DWORD),('priority',w.LONG),('flags',w.DWORD),('name',w.WCHAR*260)]
+k.CreateToolhelp32Snapshot.argtypes=[w.DWORD,w.DWORD];k.CreateToolhelp32Snapshot.restype=w.HANDLE
+for method in ['Process32FirstW','Process32NextW']:
+    getattr(k,method).argtypes=[w.HANDLE,c.POINTER(Entry)];getattr(k,method).restype=w.BOOL
+k.OpenProcess.argtypes=[w.DWORD,w.BOOL,w.DWORD];k.OpenProcess.restype=w.HANDLE
+k.CloseHandle.argtypes=[w.HANDLE];k.CloseHandle.restype=w.BOOL
+k.QueryFullProcessImageNameW.argtypes=[w.HANDLE,w.DWORD,w.LPWSTR,c.POINTER(w.DWORD)];k.QueryFullProcessImageNameW.restype=w.BOOL
+k.ProcessIdToSessionId.argtypes=[w.DWORD,c.POINTER(w.DWORD)];k.ProcessIdToSessionId.restype=w.BOOL
+installer=os.path.normcase(os.environ['OSIR_NATIVE_DIAGNOSTIC_INSTALLER'])
+destination=os.path.normcase(os.environ['OSIR_NATIVE_DIAGNOSTIC_DESTINATION']).rstrip('\\')+'\\'
+root=int(os.environ.get('OSIR_NATIVE_DIAGNOSTIC_PID','0'))
+snapshot=k.CreateToolhelp32Snapshot(2,0)
+if snapshot==c.c_void_p(-1).value: raise c.WinError(c.get_last_error())
+rows=[]
+try:
+    entry=Entry();entry.size=c.sizeof(Entry)
+    present=k.Process32FirstW(snapshot,c.byref(entry))
+    while present:
+        if len(rows)>=8192: raise RuntimeError('Process inventory exceeds observation bound')
+        path=None;handle=k.OpenProcess(0x1000,False,entry.pid)
+        if handle:
+            try:
+                size=w.DWORD(32768);buffer=c.create_unicode_buffer(size.value)
+                if k.QueryFullProcessImageNameW(handle,0,buffer,c.byref(size)): path=buffer.value
+            finally: k.CloseHandle(handle)
+        session=w.DWORD();session_id=session.value if k.ProcessIdToSessionId(entry.pid,c.byref(session)) else None
+        rows.append(dict(pid=entry.pid,parentPid=entry.parent,name=entry.name,executablePath=path,sessionId=session_id))
+        present=k.Process32NextW(snapshot,c.byref(entry))
+    if c.get_last_error()!=18: raise c.WinError(c.get_last_error())
+finally: k.CloseHandle(snapshot)
+ids={r['pid'] for r in rows if r['pid']==root or (r['executablePath'] and (os.path.normcase(r['executablePath'])==installer or os.path.normcase(r['executablePath']).startswith(destination)))}
+depth_limit=False
+for depth in range(16):
+    children={r['pid'] for r in rows if r['parentPid'] in ids}
+    if children<=ids: break
+    ids|=children
+    if depth==15: depth_limit=True
+scoped=sorted((r for r in rows if r['pid'] in ids),key=lambda r:r['pid'])[:128]
+print(json.dumps(dict(schemaVersion=1,queryOnly=True,basis='native-toolhelp-process-tree',installerPid=root or None,matchedCount=len(ids),truncated=len(ids)>128,depthLimitReached=depth_limit,processes=scoped)))`;
 
 export async function runObservedWindowsNsis(adapter, installer, destination, label,
   { command, platform = process.platform, now = Date.now, schedule = setTimeout, cancel = clearTimeout } = {}) {
@@ -140,12 +172,12 @@ export async function runObservedWindowsNsis(adapter, installer, destination, la
   // adapter on a Mac/Linux host. Never execute a native process probe there.
   if (platform !== 'win32') return adapter.run(installer, args, label, { timeout: NSIS_TIMEOUT_MS });
   if (typeof command !== 'function') throw Error('Bounded Windows diagnostic command runner required');
-  const startedAt = now();
+  const startedAt = now(); let installerPid = 0;
   const snapshot = async phase => {
     const probeStartedAt = now(); let result;
     try {
-      const raw = await command('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PROCESS_OBSERVATION], {
-        env: { ...adapter.env, OSIR_NATIVE_DIAGNOSTIC_INSTALLER: installer, OSIR_NATIVE_DIAGNOSTIC_DESTINATION: destination }, timeout: PROCESS_PROBE_TIMEOUT_MS });
+      const raw = await command('python', ['-I', '-c', WINDOWS_PROCESS_OBSERVATION], {
+        env: { ...adapter.env, OSIR_NATIVE_DIAGNOSTIC_INSTALLER: installer, OSIR_NATIVE_DIAGNOSTIC_DESTINATION: destination, OSIR_NATIVE_DIAGNOSTIC_PID: String(installerPid) }, timeout: PROCESS_PROBE_TIMEOUT_MS });
       if (raw.code !== 0) throw Object.assign(Error('Windows process observation failed'), { commandResult: raw });
       if (Buffer.byteLength(raw.stdout) > 65536) throw Error('Windows process observation output exceeds 64 KiB');
       const observation = JSON.parse(raw.stdout);
@@ -162,7 +194,7 @@ export async function runObservedWindowsNsis(adapter, installer, destination, la
   let observation, diagnosticFailure;
   const timer = schedule(() => { observation = snapshot('slow').catch(error => { diagnosticFailure = error; }); }, NSIS_OBSERVE_AT_MS);
   let value, failure;
-  try { value = await adapter.run(installer, args, label, { timeout: NSIS_TIMEOUT_MS }); }
+  try { value = await adapter.run(installer, args, label, { timeout: NSIS_TIMEOUT_MS, onSpawn: ({ pid }) => { installerPid = pid; } }); }
   catch (error) { failure = error; }
   const commandElapsedMs = now() - commandStartedAt;
   cancel(timer); if (observation) await observation;
