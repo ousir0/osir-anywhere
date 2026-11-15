@@ -282,3 +282,122 @@ for (const status of [200, 401, 403, 503]) {
     assert.equal(f.store.read()?.server.serverUrl, other.serverUrl);
   });
 }
+
+test("explicit Client handoff preserves unreadable ciphertext and atomically installs a new safeStorage session", async t => {
+  const f = fixture(t);
+  new DesktopSessionManager(f.store, fetch).accept(payload(), server);
+  const old = fs.readFileSync(f.file);
+  const decrypt = f.safe.decryptString;
+  f.safe.decryptString = value => { if (value.equals(old)) throw new Error("synthetic-keychain-denied"); return decrypt(value); };
+  const manager = new DesktopSessionManager(f.store, async () => assert.fail("no refresh/model request for unreadable session"));
+  await assert.rejects(manager.prepareLogin(), /sign-out is pending/);
+  await assert.rejects(manager.refresh(server), /Desktop session unavailable/);
+  assert.throws(() => manager.accept(payload("s".repeat(43)), server), /Desktop session unavailable/);
+  const recovery = await manager.prepareClientHandoffLogin();
+  assert.equal(typeof recovery, "string");
+  assert.deepEqual(fs.readdirSync(f.dir), ["session.enc"], "preflight never moves or deletes data");
+  manager.acceptClientHandoff(payload("s".repeat(43)), server, recovery);
+  const backups = fs.readdirSync(f.dir).filter(name => name.includes(".unreadable-"));
+  assert.equal(backups.length, 1);
+  assert.deepEqual(fs.readFileSync(path.join(f.dir, backups[0])), old);
+  assert.equal(fs.statSync(path.join(f.dir, backups[0])).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(f.file).mode & 0o777, 0o600);
+  assert.equal(f.store.read()?.refreshToken, "s".repeat(43));
+  assert.equal(manager.identityForHandoff().identity?.userId, payload().identity.userId);
+  for (const name of fs.readdirSync(f.dir)) {
+    const bytes = fs.readFileSync(path.join(f.dir, name));
+    assert.equal(bytes.includes(payload().refreshToken), false);
+    assert.equal(bytes.includes("s".repeat(43)), false);
+    assert.equal(bytes.includes(payload().accessToken), false);
+  }
+});
+
+for (const mode of ["encrypt-denied", "replace-failed", "backup-failed", "record-changed"] as const) {
+  test(`handoff recovery ${mode} preserves old record and never activates new identity`, async t => {
+    const f = fixture(t);
+    new DesktopSessionManager(f.store, fetch).accept(payload(), server);
+    const old = fs.readFileSync(f.file);
+    f.safe.decryptString = () => { throw new Error("synthetic-keychain-denied"); };
+    const manager = new DesktopSessionManager(f.store, async () => assert.fail("no network"));
+    const recovery = await manager.prepareClientHandoffLogin();
+    let expected = old;
+    if (mode === "encrypt-denied") f.safe.encryptString = () => { throw new Error("synthetic-encrypt-denied"); };
+    if (mode === "record-changed") { expected = randomBytes(80); fs.writeFileSync(f.file, expected); }
+    const rename = fs.renameSync;
+    if (mode === "replace-failed" || mode === "backup-failed") {
+      t.mock.method(fs, "renameSync", (from: fs.PathLike, to: fs.PathLike) => {
+        if (mode === "replace-failed" ? String(to) === f.file : String(to).includes(".unreadable-")) throw new Error("synthetic-disk-failure");
+        return rename(from, to);
+      });
+    }
+    assert.throws(() => manager.acceptClientHandoff(payload("s".repeat(43)), server, recovery));
+    assert.deepEqual(fs.readFileSync(f.file), expected);
+    assert.deepEqual(manager.identityForHandoff(), { generation: 0, identity: null });
+    assert.ok(fs.readdirSync(f.dir).every(name => !name.endsWith(".tmp")));
+    const backups = fs.readdirSync(f.dir).filter(name => name.includes(".unreadable-"));
+    assert.equal(backups.length, mode === "replace-failed" ? 1 : 0);
+    if (backups.length) assert.deepEqual(fs.readFileSync(path.join(f.dir, backups[0])), old);
+  });
+}
+
+test("unreadable revocation queue and known pending logout still block handoff recovery", async t => {
+  const f = fixture(t);
+  const writer = new DesktopSessionManager(f.store, async () => { throw new Error("offline"); });
+  writer.accept(payload(), server);
+  await writer.logout();
+  const old = fs.readFileSync(f.file);
+  const manager = new DesktopSessionManager(f.store, async () => new Response(null, { status: 503 }));
+  await assert.rejects(manager.prepareClientHandoffLogin(), /sign-out is pending/);
+  assert.deepEqual(fs.readFileSync(f.file), old);
+  const decrypt = f.safe.decryptString;
+  f.safe.decryptString = () => { throw new Error("synthetic-keychain-denied"); };
+  await assert.rejects(writer.prepareClientHandoffLogin(), /sign-out is pending/, "same-process known logout survives keychain denial");
+  assert.deepEqual(fs.readFileSync(f.file), old);
+  f.safe.decryptString = decrypt;
+  fs.writeFileSync(`${f.file}.revocations`, randomBytes(50));
+  f.safe.decryptString = () => { throw new Error("synthetic-keychain-denied"); };
+  await assert.rejects(manager.prepareClientHandoffLogin(), /sign-out is pending/);
+  assert.deepEqual(fs.readFileSync(f.file), old);
+  assert.ok(fs.readdirSync(f.dir).every(name => !name.includes(".unreadable-")));
+});
+
+test("decrypted invalid session data and unavailable encryption are not handoff recovery permission", async t => {
+  const f = fixture(t);
+  new DesktopSessionManager(f.store, fetch).accept(payload(), server);
+  const manager = new DesktopSessionManager(f.store, async () => assert.fail("no network"));
+  f.safe.decryptString = () => "{}";
+  await assert.rejects(manager.prepareClientHandoffLogin(), /sign-out is pending/);
+  f.safe.isEncryptionAvailable = () => false;
+  await assert.rejects(manager.prepareClientHandoffLogin(), /sign-out is pending/);
+});
+
+
+test("accepted cleanup fully drained after encryption/network failure permits the next accept", async t => {
+  const f = fixture(t);
+  let status: number | null = null;
+  let calls = 0;
+  const manager = new DesktopSessionManager(f.store, async url => {
+    assert.equal(String(url), server.serverUrl + "/api/v2/auth/osir/desktop/logout");
+    calls++;
+    if (status === null) throw new Error("synthetic-offline");
+    return new Response(null, { status });
+  });
+  manager.accept(payload(), server);
+  f.safe.isEncryptionAvailable = () => false;
+  await assert.rejects(manager.reject(payload(), server), /Desktop session unavailable/);
+  assert.deepEqual(fs.readdirSync(f.dir), []);
+  f.safe.isEncryptionAvailable = () => true;
+  status = 503;
+  await assert.rejects(manager.prepareLogin(), /sign-out is pending/);
+  assert.equal(f.store.read(), null);
+  assert.equal(f.store.readRevocations().length, 1);
+  assert.throws(() => manager.accept(payload("s".repeat(43)), server), /pending/);
+  status = 204;
+  await manager.prepareLogin();
+  assert.equal(f.store.read(), null);
+  assert.deepEqual(f.store.readRevocations(), []);
+  assert.equal(calls, 3);
+  manager.accept(payload("s".repeat(43)), server);
+  assert.equal(f.store.read()?.refreshToken, "s".repeat(43));
+  assert.equal(calls, 3, "accept needs no network after complete revocation");
+});

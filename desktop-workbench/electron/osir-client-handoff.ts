@@ -21,8 +21,9 @@ type Identity = DesktopSessionPayload["identity"];
 export type OsirHandoffAccountContext = {
   /** Trusted Main auth/binding epoch; increment on logout or account/binding changes. */
   generation: number;
-  /** Refresh/validate any stored session first; null means positively no session.
-   * A read/refresh failure must reject, never be converted to null.
+  /** Refresh/validate readable stored sessions first. Explicit Client handoff may
+   * recover an unreadable session through the Main-only ciphertext backup path.
+   * Network/refresh failures must still reject; local binding checks always apply.
    */
   desktopIdentity: Identity | null;
   localBinding: Pick<LocalDesktopBinding, "serverUrl" | "ownerUserId"> | null;

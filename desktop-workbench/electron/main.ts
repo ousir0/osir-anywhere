@@ -993,6 +993,7 @@ function initializeClientHandoff(): void {
   const key = readReleasePublicKey(app.isPackaged ? process.resourcesPath : app.getAppPath());
   let trust: Awaited<ReturnType<typeof fetchHandoffTrust>> | null = null;
   let accountValidated = false;
+  let unreadableSession: string | null = null;
   let handoffAccepted = false;
   let acceptedGeneration: number | null = null;
   const sessions = desktopSessions!;
@@ -1012,7 +1013,7 @@ function initializeClientHandoff(): void {
       },
     }),
     fetcher: (input, init) => net.fetch(String(input), init),
-    prepareLogin: async () => { accountValidated = false; handoffAccepted = false; acceptedGeneration = null; trust = null; await sessions.prepareLogin(); },
+    prepareLogin: async () => { accountValidated = false; handoffAccepted = false; acceptedGeneration = null; trust = null; unreadableSession = await sessions.prepareClientHandoffLogin(); },
     reject: async (credentials, server) => {
       // Revocation must run even when the backend has crashed or cannot stop.
       try {
@@ -1029,7 +1030,10 @@ function initializeClientHandoff(): void {
       }
     },
     readAccountContext: async signal => {
-      if (!accountValidated) { await sessions.refresh(activeDesktopServer()); accountValidated = true; }
+      if (!accountValidated) {
+        if (unreadableSession === null) await sessions.refresh(activeDesktopServer());
+        accountValidated = true;
+      }
       if (signal.aborted) throw new Error("cancelled");
       const snapshot = sessions.identityForHandoff();
       const binding = await requireBackend().request<PublicLocalDesktopBinding | null>("/device/binding", { signal });
@@ -1039,7 +1043,7 @@ function initializeClientHandoff(): void {
       if (isQuitting || signal.aborted || sessions.identityForHandoff().generation !== accountGeneration) return false;
       await desktopOAuthFlow.cancel();
       if (isQuitting || signal.aborted || sessions.identityForHandoff().generation !== accountGeneration) return false;
-      sessions.accept(credentials, server);
+      sessions.acceptClientHandoff(credentials, server, unreadableSession);
       handoffAccepted = true;
       acceptedGeneration = sessions.identityForHandoff().generation;
       serverStore!.save(server);

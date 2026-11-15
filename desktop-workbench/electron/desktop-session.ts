@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { DesktopServerConnection } from "./desktop-server";
 
 export type DesktopSessionPayload = {
@@ -17,6 +17,9 @@ const SESSION_ERROR = "Desktop session unavailable. Sign in again or check your 
 const validToken = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 16384 && !/\s/.test(value);
 const validRefresh = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value);
 class SessionRejected extends Error {}
+class DesktopSessionUnreadableError extends Error {
+  constructor(readonly ciphertextSha256: string) { super(SESSION_ERROR); }
+}
 
 export function parseDesktopSession(value: unknown): DesktopSessionPayload {
   const data = value as Partial<DesktopSessionPayload> | null;
@@ -39,7 +42,11 @@ export class DesktopSessionStore {
   read(): Stored | null {
     this.available();
     try {
-      const data = JSON.parse(this.safeStorage.decryptString(fs.readFileSync(this.file))) as Stored;
+      const ciphertext = fs.readFileSync(this.file);
+      let plaintext: string;
+      try { plaintext = this.safeStorage.decryptString(ciphertext); }
+      catch { throw new DesktopSessionUnreadableError(createHash("sha256").update(ciphertext).digest("hex")); }
+      const data = JSON.parse(plaintext) as Stored;
       if (data.version !== 1 || !validRefresh(data.refreshToken) || !Number.isFinite(data.expiresAt) || data.expiresAt < 1 || typeof data.pendingLogout !== "boolean" ||
           !data.server || data.server.apiNamespace !== "/api/v2" || typeof data.server.serverUrl !== "string" ||
           typeof data.server.oauthWebOrigin !== "string") throw new Error();
@@ -49,6 +56,7 @@ export class DesktopSessionStore {
       return data;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (error instanceof DesktopSessionUnreadableError) throw error;
       throw new Error(SESSION_ERROR);
     }
   }
@@ -73,15 +81,54 @@ export class DesktopSessionStore {
   }
   writeRevocations(values: Stored[]): void { this.writeEncrypted(`${this.file}.revocations`, values); }
   write(data: Stored): void { this.writeEncrypted(this.file, data); }
+  // The archive is unresolved encrypted recovery data, never proof of revocation.
+  writeWithUnreadableBackup(data: Stored, expectedSha256: string): void {
+    const encrypted = this.encrypt(data);
+    const ciphertext = fs.readFileSync(this.file);
+    if (createHash("sha256").update(ciphertext).digest("hex") !== expectedSha256) throw new Error(SESSION_ERROR);
+    const suffix = `${Date.now()}-${randomBytes(8).toString("hex")}`;
+    const backup = `${this.file}.unreadable-${suffix}`;
+    const backupTemp = `${backup}.tmp`;
+    const temp = `${this.file}.${randomBytes(12).toString("hex")}.tmp`;
+    fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
+    let backupReady = false;
+    try {
+      fs.writeFileSync(backupTemp, ciphertext, { mode: 0o600, flag: "wx" });
+      fs.chmodSync(backupTemp, 0o600);
+      const backupFd = fs.openSync(backupTemp, "r");
+      try { fs.fsyncSync(backupFd); } finally { fs.closeSync(backupFd); }
+      fs.renameSync(backupTemp, backup);
+      backupReady = true;
+      this.syncDirectory();
+
+      fs.writeFileSync(temp, encrypted, { mode: 0o600, flag: "wx" });
+      const tempFd = fs.openSync(temp, "r");
+      try { fs.fsyncSync(tempFd); } finally { fs.closeSync(tempFd); }
+      fs.renameSync(temp, this.file);
+      this.syncDirectory();
+    } catch (error) {
+      if (!backupReady) { try { fs.unlinkSync(backupTemp); } catch { /* absent */ } }
+      throw error;
+    } finally { try { fs.unlinkSync(temp); } catch { /* already moved */ } }
+  }
   private writeEncrypted(file: string, data: unknown): void {
-    this.available();
-    const encrypted = this.safeStorage.encryptString(JSON.stringify(data));
+    const encrypted = this.encrypt(data);
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const temp = `${file}.${randomBytes(12).toString("hex")}.tmp`;
     try {
       fs.writeFileSync(temp, encrypted, { mode: 0o600, flag: "wx" });
       fs.renameSync(temp, file);
     } finally { try { fs.unlinkSync(temp); } catch { /* already moved */ } }
+  }
+  private encrypt(data: unknown): Buffer {
+    this.available();
+    return this.safeStorage.encryptString(JSON.stringify(data));
+  }
+  private syncDirectory(): void {
+    let fd: number | undefined;
+    try { fd = fs.openSync(path.dirname(this.file), "r"); fs.fsyncSync(fd); }
+    catch { /* Some supported filesystems do not expose directory fsync. */ }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
   }
   clear(): void { try { fs.unlinkSync(this.file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
 }
@@ -95,30 +142,63 @@ export class DesktopSessionManager {
   private current: Stored | null = null;
   private flight: Promise<PublicDesktopSession | null> | null = null;
   private generation = 0;
-  private revocationFlight: Promise<void> | null = null;
+  private revocationFlight: Promise<string | null> | null = null;
   private unrecordedRevocations: Stored[] = [];
+  private knownPendingLogout = false;
   private controller: AbortController | null = null;
   constructor(private readonly store: DesktopSessionStore, private readonly fetcher: typeof fetch) {}
 
   accept(session: DesktopSessionPayload, server: DesktopServerConnection): PublicDesktopSession {
+    return this.acceptSession(session, server, null);
+  }
+
+  /** Main calls only after one-time Client proof, binding and generation checks. */
+  acceptClientHandoff(session: DesktopSessionPayload, server: DesktopServerConnection, unreadableSha256: string | null): PublicDesktopSession {
+    return this.acceptSession(session, server, unreadableSha256);
+  }
+
+  private acceptSession(session: DesktopSessionPayload, server: DesktopServerConnection, unreadableSha256: string | null): PublicDesktopSession {
     const payload = parseDesktopSession(session);
-    if (this.unrecordedRevocations.length) throw new Error("Server sign-out is pending. Reconnect before signing in again.");
+    if (this.knownPendingLogout || this.unrecordedRevocations.length) throw new Error("Server sign-out is pending. Reconnect before signing in again.");
     if (this.store.readRevocations().some(value => value.expiresAt > Date.now())) throw new Error("Server sign-out is pending. Reconnect before signing in again.");
+    if (unreadableSha256 !== null) {
+      if (this.current || this.handoffIdentity) throw new Error(SESSION_ERROR);
+      const saved: Stored = { version: 1, server, refreshToken: payload.refreshToken,
+        expiresAt: Date.now() + payload.refreshExpiresIn * 1000, pendingLogout: false };
+      this.store.writeWithUnreadableBackup(saved, unreadableSha256);
+      return this.activate(payload, saved);
+    }
     const previous = this.store.read();
     if (previous?.pendingLogout && previous.expiresAt > Date.now()) throw new Error("Server sign-out is pending. Reconnect before signing in again.");
     const saved: Stored = { version: 1, server, refreshToken: payload.refreshToken,
       expiresAt: Date.now() + payload.refreshExpiresIn * 1000, pendingLogout: false };
     this.store.write(saved);
+    return this.activate(payload, saved);
+  }
+
+  private activate(payload: DesktopSessionPayload, saved: Stored): PublicDesktopSession {
     this.generation++;
     this.controller?.abort();
     this.current = saved;
     this.handoffIdentity = { ...payload.identity };
-    return { accessToken: payload.accessToken, expiresIn: 300, server };
+    return { accessToken: payload.accessToken, expiresIn: 300, server: saved.server };
   }
 
   /** Login and restore both drain revocations against the original saved origin. */
   async prepareLogin(): Promise<void> {
-    if (this.revocationFlight) return this.revocationFlight;
+    await this.prepareLoginState(false);
+  }
+
+  async prepareClientHandoffLogin(): Promise<string | null> {
+    return this.prepareLoginState(true);
+  }
+
+  private async prepareLoginState(allowUnreadableSession: boolean): Promise<string | null> {
+    if (this.revocationFlight) {
+      const unreadable = await this.revocationFlight;
+      if (unreadable !== null && !allowUnreadableSession) throw new Error("Server sign-out is pending. Check your connection and retry sign-in.");
+      return unreadable;
+    }
     const generation = this.generation;
     const work = (async () => {
       if (this.unrecordedRevocations.length) {
@@ -129,14 +209,23 @@ export class DesktopSessionManager {
         if (saved.expiresAt > Date.now()) await this.post(saved.server, "logout", saved.refreshToken);
         this.removeRevocation(saved);
       }
-      const saved = this.current ?? this.store.read();
-      if (saved?.pendingLogout) {
-        if (saved.expiresAt > Date.now()) await this.post(saved.server, "logout", saved.refreshToken);
-        if (generation === this.generation) { this.current = null; this.store.clear(); }
+      let saved: Stored | null;
+      try { saved = this.current ?? this.store.read(); }
+      catch (error) {
+        if (allowUnreadableSession && !this.knownPendingLogout && error instanceof DesktopSessionUnreadableError) return error.ciphertextSha256;
+        throw error;
       }
+      if (saved?.pendingLogout) {
+        this.knownPendingLogout = true;
+        if (saved.expiresAt > Date.now()) await this.post(saved.server, "logout", saved.refreshToken);
+        if (generation === this.generation) { this.current = null; this.store.clear(); this.knownPendingLogout = false; }
+      } else if (!saved && generation === this.generation && this.unrecordedRevocations.length === 0 && this.store.readRevocations().length === 0) {
+        this.knownPendingLogout = false;
+      }
+      return null;
     })().catch(() => { throw new Error("Server sign-out is pending. Check your connection and retry sign-in."); });
     this.revocationFlight = work;
-    try { await work; } finally { if (this.revocationFlight === work) this.revocationFlight = null; }
+    try { return await work; } finally { if (this.revocationFlight === work) this.revocationFlight = null; }
   }
 
   private removeRevocation(saved: Stored): void {
@@ -191,14 +280,15 @@ export class DesktopSessionManager {
     try { saved ??= this.store.read(); }
     catch { this.store.clear(); throw new Error(SESSION_ERROR); }
     if (!saved) return { pending: false };
-    if (saved.expiresAt <= Date.now()) { this.store.clear(); return { pending: false }; }
+    if (saved.expiresAt <= Date.now()) { this.store.clear(); this.knownPendingLogout = false; return { pending: false }; }
     const pending = { ...saved, pendingLogout: true };
+    this.knownPendingLogout = true;
     let recorded = true;
     try { this.store.write(pending); }
     catch { recorded = false; this.store.clear(); }
     try {
       await this.post(saved.server, "logout", saved.refreshToken);
-      if (generation === this.generation) this.store.clear();
+      if (generation === this.generation) { this.store.clear(); this.knownPendingLogout = false; }
       return { pending: false };
     } catch {
       if (!recorded) {

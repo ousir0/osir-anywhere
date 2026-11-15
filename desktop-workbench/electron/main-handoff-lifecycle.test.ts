@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { DesktopSessionManager, DesktopSessionStore } from "./desktop-session";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
@@ -18,11 +21,11 @@ const credentials: DesktopSessionPayload = { accessToken: "synthetic-access", to
   identity: { issuer: "https://osirclaw.com", subject: "123", userId: "synthetic-user" } };
 const server = { serverUrl: "https://anywhere.osirclaw.com", apiNamespace: "/api/v2", oauthWebOrigin: "https://anywhere.osirclaw.com" };
 
-function fixture() {
+function fixture(manager?: DesktopSessionManager) {
   let options!: OsirClientHandoffOptions;
   let generation = 3;
   const calls: string[] = [];
-  const controls = { stopFails: false, bootstrap: async () => {} };
+  const controls = { stopFails: false, bootstrap: async () => {}, binding: null as null | { serverUrl: string; ownerUserId: string } };
   const globals = {
     process: { platform: "darwin", resourcesPath: "/Synthetic/Resources" }, path, __dirname: "/Synthetic/Resources/app.asar/dist/electron",
     app: { isPackaged: true, getAppPath: () => "/Synthetic/Resources/app.asar", getPath: () => "/Synthetic/home" },
@@ -31,15 +34,15 @@ function fixture() {
     OsirClientHandoffTransport: class { constructor(readonly options: unknown) {} },
     OsirClientHandoffController: class { constructor(value: OsirClientHandoffOptions) { options = value; } },
     clientHandoff: null,
-    desktopSessions: {
-      prepareLogin: async () => {}, refresh: async () => {},
+    desktopSessions: manager ?? {
+      prepareClientHandoffLogin: async () => null, refresh: async () => {},
       identityForHandoff: () => ({ generation, identity: null }),
-      accept: () => { generation++; calls.push("accept"); },
+      acceptClientHandoff: () => { generation++; calls.push("accept"); },
       logout: async () => { generation++; calls.push("logout"); },
       reject: async () => { calls.push("reject-issued"); },
     },
     requireBackend: () => ({ request: async (route: string) => {
-      calls.push(route); if (route === "/stop" && controls.stopFails) throw new Error("backend stopped"); return null;
+      calls.push(route); if (route === "/stop" && controls.stopFails) throw new Error("backend stopped"); return route === "/device/binding" ? controls.binding : null;
     } }),
     activeDesktopServer: () => server,
     desktopOAuthFlow: { cancel: async () => {} },
@@ -122,3 +125,71 @@ test("Main captures the original launch flow and forwards additionalData to the 
   await new Promise<void>(resolve => setImmediate(resolve));
   assert.deepEqual(received, [flow]);
 });
+
+for (const owner of [credentials.identity.userId, "different-tenant"]) {
+  test(`real Main and session manager recover unreadable old ciphertext with binding owner ${owner}`, async t => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "handoff-keychain-recovery-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const file = path.join(dir, "session.enc"), key = randomBytes(32);
+    const safe = {
+      isEncryptionAvailable: () => true,
+      encryptString: (text: string) => {
+        const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", key, iv);
+        const bytes = Buffer.concat([cipher.update(text), cipher.final()]);
+        return Buffer.concat([iv, cipher.getAuthTag(), bytes]);
+      },
+      decryptString: (bytes: Buffer) => {
+        const cipher = createDecipheriv("aes-256-gcm", key, bytes.subarray(0, 12));
+        cipher.setAuthTag(bytes.subarray(12, 28));
+        return Buffer.concat([cipher.update(bytes.subarray(28)), cipher.final()]).toString();
+      },
+    };
+    const store = new DesktopSessionStore(file, safe);
+    new DesktopSessionManager(store, fetch).accept(credentials, server);
+    const old = fs.readFileSync(file), decrypt = safe.decryptString;
+    let deniedReads = 0;
+    safe.decryptString = bytes => {
+      if (bytes.equals(old)) { deniedReads++; throw new Error("synthetic-keychain-denied"); }
+      return decrypt(bytes);
+    };
+    const manager = new DesktopSessionManager(store, async () => assert.fail("no old-session refresh"));
+    const f = fixture(manager);
+    assert.equal(deniedReads, 0, "initializing Main never invokes keychain");
+    f.controls.binding = { serverUrl: server.serverUrl, ownerUserId: owner };
+    await f.options.prepareLogin();
+    const account = await f.options.readAccountContext(new AbortController().signal);
+    assert.equal(account.desktopIdentity, null);
+    assert.equal(account.localBinding?.ownerUserId, owner);
+    assert.equal(deniedReads, 1, "account lookup never retries old decryption/refresh");
+    // Exercise actual controller account checks with synthetic transport/HTTP only.
+    const { OsirClientHandoffController } = await import("./osir-client-handoff.js");
+    const { performance } = await import("node:perf_hooks");
+    const flowId = Buffer.alloc(32, 1).toString("base64url"), state = Buffer.alloc(32, 2).toString("base64url");
+    const receiver = Buffer.alloc(32, 3).toString("base64url");
+    const controller = new OsirClientHandoffController({ ...f.options,
+      transport: { run: async (_flow, consume, signal) => consume({ grant_type: "urn:osir:params:grant-type:anywhere-handoff",
+        client_id: "osir-anywhere-desktop", code: Buffer.alloc(32, 4).toString("base64url"),
+        code_verifier: Buffer.alloc(48, 5).toString("base64url"), state, receiver_instance_id: receiver,
+        target_origin: "https://anywhere.osirclaw.com" }, { flowId, state, receiverInstanceId: receiver, targetOrigin: "https://anywhere.osirclaw.com",
+        codeDeadline: performance.now() + 60000, configuredToolTypes: [] }, signal ?? new AbortController().signal) },
+      fetcher: async url => String(url).endsWith("/token") ? Response.json({ code: 0, message: "success", data: {
+        assertion: `${"a".repeat(30)}.${"b".repeat(80)}.${"c".repeat(85)}A`, token_type: "urn:osir:params:token-type:anywhere-handoff",
+        expires_in: 60, audience: "osir-anywhere-server" } }) : Response.json(credentials),
+      reject: async () => { f.calls.push("reject-issued"); },
+    });
+    const result = await controller.run({ flowId });
+    if (owner !== credentials.identity.userId) {
+      assert.deepEqual(result, { status: "error", reason: "account_mismatch" });
+      assert.deepEqual(fs.readFileSync(file), old);
+      assert.deepEqual(fs.readdirSync(dir), ["session.enc"]);
+      assert.ok(!f.calls.includes("bootstrap"));
+    } else {
+      assert.deepEqual(result, { status: "authenticated" });
+      assert.ok(f.calls.includes("bootstrap"));
+      assert.equal(f.calls.at(-1), "publish");
+      assert.equal(store.read()?.refreshToken, credentials.refreshToken);
+      const backup = fs.readdirSync(dir).find(name => name.includes(".unreadable-"))!;
+      assert.deepEqual(fs.readFileSync(path.join(dir, backup)), old);
+    }
+  });
+}
