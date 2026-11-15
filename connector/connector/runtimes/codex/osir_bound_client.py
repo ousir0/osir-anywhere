@@ -1,4 +1,4 @@
-"""Bound SDK surface. No project hard paths, broad history list, or passthrough."""
+"""Bound SDK surface with validated history discovery inside its Codex home."""
 from __future__ import annotations
 
 import asyncio
@@ -7,6 +7,9 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+from openai_codex import JsonRpcError
+
+from connector.runtime_protocol import RuntimeInvalidRequestError
 from connector.runtimes.codex.osir_binding import (
     ModelBindingUnavailable,
     canonical_directory,
@@ -20,6 +23,8 @@ from connector.runtimes.codex.sdk.runtime_client import (
 
 _ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _SETTINGS = {"model", "effort", "permissions", "approvalPolicy", "approvalsReviewer"}
+_THREAD_LIMIT = 10000
+_HISTORY_READ_CONCURRENCY = 8
 
 
 class BoundCodexClient:
@@ -53,7 +58,7 @@ class BoundCodexClient:
         self._key = "osir-bound-threads/" + hashlib.sha256(str(binding.home).encode()).hexdigest()
         saved = self.store.get(self._key) or {"threads": {}}
         rows = saved.get("threads")
-        if (not isinstance(rows, dict) or len(rows) > 10000 or any(
+        if (not isinstance(rows, dict) or len(rows) > _THREAD_LIMIT or any(
                 not isinstance(key, str) or not _ID.fullmatch(key)
                 or not isinstance(cwd, str) or not Path(cwd).is_absolute()
                 for key, cwd in rows.items())):
@@ -114,26 +119,94 @@ class BoundCodexClient:
         return CodexModelListResult(models=tuple(rows))
 
     async def list_threads(self, limit=100, cursor=None, archived=None):
-        await self.check()
-        # Only locally recorded, actually created thread IDs. Never delegate a
-        # broad SDK history inventory or enumerate the user's Codex Home.
-        try:
-            offset = 0 if cursor is None else int(cursor)
-            if offset < 0 or offset > 10000 or not 1 <= limit <= 1000:
-                raise ValueError()
-        except (ValueError, TypeError):
+        binding = await self.check()
+        if type(limit) is not int or not 1 <= limit <= 1000 or (
+            cursor is not None and not isinstance(cursor, str)
+        ) or (archived is not None and type(archived) is not bool):
             raise ModelBindingUnavailable() from None
-        identifiers = sorted(self._threads)
-        chosen = identifiers[offset:offset + limit]
+        result = await self.delegate.list_threads(limit=limit, cursor=cursor, archived=archived)
+        candidates = []
+        for candidate in result.threads:
+            row = _mapping(candidate)
+            identifier = row.get("id")
+            cwd = row.get("cwd")
+            if not isinstance(identifier, str) or not _ID.fullmatch(identifier):
+                continue
+            try:
+                canonical_cwd = str(canonical_directory(cwd))
+            except (ModelBindingUnavailable, OSError, ValueError, TypeError):
+                continue
+            candidate_path = row.get("path")
+            if candidate_path is not None and not self._path_in_home(candidate_path, binding.home):
+                continue
+            # SDK Thread has no archived flag. The native list filter is the
+            # authority, and its opaque cursor must survive even an empty page.
+            candidates.append((identifier, canonical_cwd, row))
+
         rows = []
-        for identifier in chosen:
-            result = await self.read_thread(identifier, include_turns=False)
-            row = _mapping(result.thread)
-            if archived is None or bool(row.get("archived", False)) == archived:
-                rows.append(row)
+        registrations = {}
+        for start in range(0, len(candidates), _HISTORY_READ_CONCURRENCY):
+            batch = candidates[start:start + _HISTORY_READ_CONCURRENCY]
+            # Drain each batch before propagating an error: no orphan reads or
+            # registry writes continue after this request has failed/cancelled.
+            verified = await asyncio.gather(*(self._read_history_candidate(
+                identifier, row, binding.home
+            ) for identifier, _, row in batch), return_exceptions=True)
+            for (identifier, cwd, _), row in zip(batch, verified):
+                if isinstance(row, BaseException):
+                    raise row
+                if row is not None:
+                    registrations[identifier] = cwd
+                    rows.append(row)
         await self.check()
-        following = offset + len(chosen)
-        return CodexThreadListResult(tuple(rows), str(following) if following < len(identifiers) else None)
+        if registrations:
+            threads = {**self._threads, **registrations}
+            if len(threads) > _THREAD_LIMIT:
+                # Do not silently truncate history or persist an unloadable
+                # registry. Existing registrations remain usable/restartable.
+                raise RuntimeInvalidRequestError(
+                    "Codex history registration limit (10000) exceeded; existing history is unchanged"
+                )
+            self.store.set(self._key, {"threads": threads})
+            self._threads = threads
+        return CodexThreadListResult(tuple(rows), result.next_cursor)
+
+    async def _read_history_candidate(self, identifier, listed, home):
+        try:
+            row = _mapping((await self.delegate.read_thread(
+                identifier, include_turns=False
+            )).thread)
+        except (KeyError, FileNotFoundError, PermissionError, IsADirectoryError, NotADirectoryError):
+            return None
+        except JsonRpcError as exc:
+            # A deleted/unreadable rollout is a per-thread failure. Do not hide
+            # busy/transport/protocol errors or arbitrary internal RPC failures.
+            message = exc.message.lower()
+            missing = "thread not found" in message or "no rollout found" in message
+            unreadable = "rollout" in message and any(reason in message for reason in (
+                "no such file", "permission denied", "access is denied",
+                "cannot find the file", "(os error 2)", "(os error 3)", "(os error 5)",
+            ))
+            if exc.code in (-32600, -32603) and (missing or unreadable):
+                return None
+            raise
+        if row.get("id") != identifier or row.get("cwd") != listed.get("cwd"):
+            return None
+        if row.get("path") is not None and not self._path_in_home(row["path"], home):
+            return None
+        return row
+
+    @staticmethod
+    def _path_in_home(value, home):
+        if not isinstance(value, str):
+            return False
+        candidate = Path(value)
+        try:
+            return (candidate.is_absolute() and ".." not in candidate.parts
+                and candidate.resolve(strict=False) == candidate
+                and candidate.is_relative_to(home))
+        except (OSError, ValueError):
+            return False
 
     async def read_thread(self, thread_id, include_turns=True):
         binding = await self.check()
@@ -173,13 +246,19 @@ class BoundCodexClient:
         if request.cwd is None:
             raise ModelBindingUnavailable()  # Workspace must be explicitly chosen.
         cwd = str(canonical_directory(request.cwd))
-        if len(self._threads) >= 10000:
+        if len(self._threads) >= _THREAD_LIMIT:
             raise ModelBindingUnavailable()
         result = await self.delegate.start_thread(replace(request, cwd=cwd,
             model=binding.select(request.model)))
         await self.check()
         if not isinstance(result.thread_id, str) or not _ID.fullmatch(result.thread_id):
             raise ModelBindingUnavailable()
+        # A concurrent history refresh may have filled the last slot while
+        # thread/start was awaiting the SDK. Never persist an oversized map.
+        if result.thread_id not in self._threads and len(self._threads) >= _THREAD_LIMIT:
+            raise RuntimeInvalidRequestError(
+                "Codex history registration limit (10000) exceeded; existing history is unchanged"
+            )
         self._threads[result.thread_id] = cwd
         try:
             await self.read_thread(result.thread_id, include_turns=False)

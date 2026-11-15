@@ -42,6 +42,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
     CodexRuntimeClient,
     CodexStartThreadRequest,
     CodexStartTurnRequest,
+    CodexThreadListResult,
     CodexThreadReadResult,
     CodexThreadResult,
     CodexTurnResult,
@@ -90,7 +91,16 @@ class Native:
         self.requests = []
         self.started = False
         self.stopped = False
-        self.list_threads = AsyncMock(side_effect=AssertionError("No global history scan"))
+        self.list_threads = AsyncMock(side_effect=self._list_threads)
+
+    async def _list_threads(self, limit=100, cursor=None, archived=None):
+        rows = [row for row in self.rows.values()
+            if archived is None or bool(row.get("archived", False)) is archived]
+        start = int(cursor or 0)
+        page = rows[start:start + limit]
+        following = start + len(page)
+        return CodexThreadListResult(tuple(dict(row) for row in page),
+            str(following) if following < len(rows) else None)
 
     async def start(self, handler):
         self.handler = handler
@@ -427,7 +437,7 @@ def test_remote_route_home_environment_and_ipc_overrides_rejected(fixture, value
         asyncio.run(provider_for(fixture, Native()).validate_config(values))
 
 
-def test_normal_sdk_models_defaults_switch_and_no_history_scan(fixture, monkeypatch):
+def test_normal_sdk_models_and_bound_runtime_lists_local_history(fixture, monkeypatch):
     async def run():
         native, host = Native(), FakeHost()
         provider = provider_for(fixture, native)
@@ -448,7 +458,7 @@ def test_normal_sdk_models_defaults_switch_and_no_history_scan(fixture, monkeypa
             assert native.requests[1].model == "active/a"
             assert native.requests[1].effort == "medium"
             assert native.requests[2].model == "active/b"
-            native.list_threads.assert_not_called()
+            native.list_threads.assert_awaited()
             assert [row.id for row in await runtime.list_commands("session", created.thread_id)] == ["compact"]
             for command in ("open-in-codex-app", "kill-chatgpt", "/quit-chatgpt"):
                 assert (await runtime.execute_command("session", command)).code == "osir_external_codex_disabled"
@@ -532,18 +542,46 @@ def test_unknown_threads_and_cross_home_paths_never_read_history(fixture):
     asyncio.run(run())
 
 
-def test_owned_thread_registration_survives_reconnect_without_inventory(fixture):
+def test_existing_home_threads_are_discovered_and_registered_on_reconnect(fixture):
     async def run():
         native = Native()
+        existing_id = "existing-thread"
+        native.rows[existing_id] = {"id": existing_id, "cwd": str(fixture.workspace),
+            "path": str(fixture.home / "sessions" / "rollout-existing.jsonl"), "turns": []}
         first = BoundCodexClient(native, fixture.reader(), fixture.store)
         await first.start(AsyncMock())
         created = await first.start_thread(CodexStartThreadRequest(cwd=str(fixture.workspace)))
         await first.stop()
         second = BoundCodexClient(native, fixture.reader(), fixture.store)
         await second.start(AsyncMock())
-        assert [row["id"] for row in (await second.list_threads()).threads] == [created.thread_id]
-        native.list_threads.assert_not_called()
+        first_page = await second.list_threads(limit=1)
+        second_page = await second.list_threads(limit=1, cursor=first_page.next_cursor)
+        assert {row["id"] for row in (*first_page.threads, *second_page.threads)} == {existing_id, created.thread_id}
+        assert (await second.read_thread(existing_id, include_turns=False)).thread["id"] == existing_id
+        native.list_threads.assert_awaited()
         await second.stop()
+    asyncio.run(run())
+
+
+def test_history_inventory_rejects_cross_home_rollouts_and_missing_workspaces(fixture):
+    async def run():
+        native = Native()
+        native.rows.update({
+            "outside-rollout": {"id": "outside-rollout", "cwd": str(fixture.workspace),
+                "path": str(fixture.workspace / "rollout.jsonl")},
+            "missing-workspace": {"id": "missing-workspace", "cwd": str(fixture.home / "not-a-workspace"),
+                "path": str(fixture.home / "sessions" / "rollout-missing.jsonl")},
+            "valid": {"id": "valid", "cwd": str(fixture.workspace),
+                "path": str(fixture.home / "sessions" / "rollout-valid.jsonl")},
+        })
+        client = BoundCodexClient(native, fixture.reader(), fixture.store)
+        await client.start(AsyncMock())
+        assert [row["id"] for row in (await client.list_threads()).threads] == ["valid"]
+        with pytest.raises(ModelBindingUnavailable):
+            await client.read_thread("outside-rollout")
+        with pytest.raises(ModelBindingUnavailable):
+            await client.read_thread("missing-workspace")
+        await client.stop()
     asyncio.run(run())
 
 
