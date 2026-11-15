@@ -421,7 +421,7 @@ export async function packagedDiscoveryProbe() {
   const { DesktopUpdateService } = require(servicePath), { RELEASE_MANIFEST_URL } = require('./dist/electron/release-manifest.js');
   const { readPackagedRevision } = require('./dist/electron/release-build-info.js');
   const installedRevision = readPackagedRevision(app.getAppPath(), app.getVersion());
-  if (installedRevision !== 2) throw new Error('Expected final packaged revision 2');
+  if (installedRevision !== 3) throw new Error('Expected final packaged revision 3');
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
   const requests = [], stages = [], envelopes = []; let installerCalls = 0, version = '2.2.1', revision = installedRevision, invalid = false, healthControl = 'before';
@@ -453,7 +453,7 @@ export async function packagedDiscoveryProbe() {
     openInstaller: async () => { installerCalls++; throw new Error('Installer opening is forbidden in discovery'); } });
   try {
     const serverBefore = await (await fetcher(server.serverUrl + '/api/v2/health')).json(); healthControl = null;
-    const baseline = await service.check(server); revision = 3;
+    const baseline = await service.check(server); revision = 4;
     const revisionUpgrade = await service.check(server); revision = 0;
     const rollback = await service.check(server); version = '2.2.2';
     const patch = await service.check(server); invalid = true;
